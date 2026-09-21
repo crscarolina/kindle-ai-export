@@ -64,10 +64,36 @@ async function ocrImage(
   return stdout
 }
 
-/** Returns true if the first word of `line` appears in the system word list. */
+/**
+ * The system word list only contains base forms, so check a few common
+ * inflections too (`wondered` -> `wonder`, `making` -> `make`).
+ */
+function isKnownWord(word: string, words: Set<string> | undefined): boolean {
+  if (!word || !words) return false
+
+  const lower = word.toLowerCase()
+  if (words.has(lower)) return true
+
+  const stems = [
+    lower.replace(/s$/, ''),
+    lower.replace(/es$/, ''),
+    lower.replace(/ed$/, ''),
+    lower.replace(/d$/, ''),
+    lower.replace(/ing$/, ''),
+    lower.replace(/ing$/, 'e'),
+    lower.replace(/ly$/, ''),
+    lower.replace(/ies$/, 'y')
+  ]
+
+  return stems.some(
+    (stem) => stem !== lower && stem.length > 1 && words.has(stem)
+  )
+}
+
+/** Returns true if the first word of `line` is a known English word. */
 function isKnownFirstWord(line: string, words: Set<string> | undefined) {
   const word = line.split(/\s+/)[0]?.replaceAll(/[^A-Za-z]/g, '')
-  return !!word && !!words?.has(word.toLowerCase())
+  return !!word && isKnownWord(word, words)
 }
 
 /**
@@ -105,13 +131,20 @@ function fixDropCap(text: string, words: Set<string> | undefined): string {
     const next = lines[i + 1]!
     const withStrayChar = dropCap + next
     const withoutStrayChar = dropCap + next.slice(1)
+    // A drop cap can also be a word of its own (`I wondered`), in which case
+    // the line below it starts with an intact word
+    const asOwnWord = `${dropCap} ${next}`
+    const isOwnWord =
+      (dropCap === 'I' || dropCap === 'A') && isKnownFirstWord(next, words)
 
-    // Default to keeping the character when neither option is a known word
+    // Default to keeping the character when no option is a known word
     const merged = isKnownFirstWord(withStrayChar, words)
       ? withStrayChar
       : isKnownFirstWord(withoutStrayChar, words)
         ? withoutStrayChar
-        : withStrayChar
+        : isOwnWord
+          ? asOwnWord
+          : withStrayChar
 
     lines.splice(i, 2, merged)
   }
@@ -180,12 +213,7 @@ async function main() {
           // Drop caps we couldn't repair leave a garbled first word behind,
           // so flag chapter pages which still look suspicious
           const firstWord = text.split(/\s+/)[0]?.replaceAll(/[^A-Za-z]/g, '')
-          if (
-            tocItem &&
-            words &&
-            firstWord &&
-            !words.has(firstWord.toLowerCase())
-          ) {
+          if (tocItem && words && firstWord && !isKnownWord(firstWord, words)) {
             console.warn('check drop cap manually...', {
               index,
               page,
