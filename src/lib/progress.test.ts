@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest'
 
 import {
+  captureProgress,
   describeRemaining,
   estimateRemainingMs,
   formatDuration,
@@ -187,5 +188,69 @@ describe('realtimeFactor', () => {
     expect(
       realtimeFactor({ elapsedMs: -1000, audioSeconds: 10 })
     ).toBeUndefined()
+  })
+})
+
+describe('captureProgress', () => {
+  test('counts from the first content page, not from page one', () => {
+    // Front matter sits before the first content page, so a book starting at
+    // page 5 is zero percent done there, not already five pages in.
+    expect(captureProgress({ current: 5, start: 5, total: 652 })).toEqual({
+      index: 0,
+      total: 648
+    })
+  })
+
+  test('reaches exactly the total on the final page', () => {
+    // The bug this guards: screenshots were counted against a page total, so
+    // a 652-page book reported "741/652".
+    const { index, total } = captureProgress({
+      current: 652,
+      start: 5,
+      total: 652
+    })
+    expect(index + 1).toBe(total)
+  })
+
+  test('never exceeds the total', () => {
+    const { index, total } = captureProgress({
+      current: 999,
+      start: 1,
+      total: 652
+    })
+    expect(index).toBeLessThanOrEqual(total)
+  })
+
+  test('never goes negative before the first content page', () => {
+    expect(captureProgress({ current: 1, start: 5, total: 652 }).index).toBe(0)
+  })
+
+  test('is monotonic across a book', () => {
+    let previous = -1
+    for (let page = 1; page <= 652; page++) {
+      const { index } = captureProgress({ current: page, start: 5, total: 652 })
+      expect(index).toBeGreaterThanOrEqual(previous)
+      previous = index
+    }
+  })
+
+  test('a page limit replaces the total', () => {
+    // A preview of 50 pages should read out of 50, not out of the whole book.
+    expect(
+      captureProgress({ current: 10, start: 1, total: 652, limit: 50 }).total
+    ).toBe(50)
+  })
+
+  test('handles a single-page book', () => {
+    expect(captureProgress({ current: 1, start: 1, total: 1 })).toEqual({
+      index: 0,
+      total: 1
+    })
+  })
+
+  test('falls back to one when the total is nonsense', () => {
+    expect(
+      captureProgress({ current: 1, start: 1, total: 0 }).total
+    ).toBeGreaterThan(0)
   })
 })

@@ -138,3 +138,35 @@ export function realtimeFactor({
 
   return elapsedMs / 1000 / audioSeconds
 }
+
+/**
+ * Capture progress, counted in the book's own units.
+ *
+ * One page spans several screenshots, so counting screenshots against a page
+ * total reports more work done than the book contains -- a 652-page book
+ * reached "741/652". Pages repeat, so this can hold steady for a screenshot
+ * or two, but it is monotonic and never overruns.
+ */
+export function captureProgress({
+  current,
+  start,
+  total,
+  limit
+}: {
+  /** The page or location just captured. */
+  current: number
+  /** The first content page, after any front matter. */
+  start: number
+  /** The last content page. */
+  total: number
+  /** A preview cap, which replaces the total outright. */
+  limit?: number
+}): { index: number; total: number } {
+  const span = Math.max(1, total - start + 1)
+  const capped = limit ?? span
+
+  return {
+    index: Math.min(Math.max(0, current - start), capped),
+    total: capped
+  }
+}
