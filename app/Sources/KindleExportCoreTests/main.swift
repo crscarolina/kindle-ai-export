@@ -523,4 +523,99 @@ t.expectEqual(
   JobNotification.forOutcome(book: "Hamlet", outcome: .cancelled).title,
   "Export cancelled", "a cancelled export says so")
 
+// MARK: - Step names
+
+// The raw values are command-line identifiers; the interface should not show
+// the reader lowercase jargon like "extract" and "pdf".
+for step in ExportStep.allCases {
+  let name = step.displayName
+  t.expect(
+    name.first.map { $0.isUppercase } == true,
+    "\(step.rawValue) is capitalised: \(name)")
+  t.expect(name != step.rawValue, "\(step.rawValue) is not shown verbatim")
+  t.expect(!step.detail.isEmpty, "\(step.rawValue) explains itself")
+  t.expect(!step.symbolName.isEmpty, "\(step.rawValue) has a symbol")
+}
+
+t.expectEqual(ExportStep.extractBook.displayName, "Capture Pages", "extract reads as capture")
+t.expectEqual(ExportStep.audio.displayName, "Audiobook", "audio reads as audiobook")
+
+t.expectEqual(
+  Set(ExportStep.allCases.map(\.displayName)).count, ExportStep.allCases.count,
+  "no two steps share a name")
+
+// MARK: - Job timeline
+
+var timeline = JobTimeline(steps: [.extractBook, .transcribe, .markdown])
+
+t.expectEqual(timeline.steps.count, 3, "the timeline holds every planned step")
+t.expect(timeline.steps.allSatisfy { $0.state == .pending }, "all steps start pending")
+t.expectEqual(timeline.overallFraction, 0, "nothing done means zero progress")
+t.expect(timeline.currentStep == nil, "nothing is running yet")
+
+timeline.start(.extractBook)
+t.expect(timeline.currentStep == .extractBook, "the started step is current")
+t.expect(timeline.steps[0].fraction == nil, "a step with no total yet draws no bar")
+
+timeline.advance(.extractBook, completed: 326, total: 652)
+t.expectEqual(timeline.steps[0].fraction, 0.5, "progress is reported as a fraction")
+t.expectEqual(timeline.steps[0].detailText, "326 of 652", "progress reads naturally")
+t.expectEqual(timeline.overallFraction, 0.5 / 3, "a part-done step is a part share")
+
+// Steps run in order, so a later one starting proves the earlier ones
+// finished -- even if their step-done event was missed.
+timeline.start(.markdown)
+t.expectEqual(timeline.steps[0].state, .done, "an earlier step is completed implicitly")
+t.expectEqual(timeline.steps[1].state, .done, "every earlier step is completed")
+
+timeline.finish(.markdown)
+t.expectEqual(timeline.overallFraction, 1, "all steps done is full progress")
+t.expect(timeline.currentStep == nil, "nothing runs once everything is done")
+
+// A failure stops the pipeline; later steps never ran.
+var failing = JobTimeline(steps: [.extractBook, .transcribe, .markdown])
+failing.start(.extractBook)
+failing.fail(.extractBook, "Chrome would not start")
+t.expectEqual(failing.steps[0].state, .failed("Chrome would not start"), "the step records why")
+t.expectEqual(failing.steps[1].state, .skipped, "the next step is skipped, not waiting")
+t.expectEqual(failing.steps[2].state, .skipped, "every later step is skipped")
+t.expect(failing.steps[0].fraction == nil, "a failed step draws no bar")
+t.expectEqual(failing.steps[1].detailText, "Skipped", "a skipped step says so")
+
+// Progress can outrun the total when a page spans several screenshots.
+var overrun = JobTimeline(steps: [.extractBook])
+overrun.start(.extractBook)
+overrun.advance(.extractBook, completed: 741, total: 652)
+t.expectEqual(overrun.steps[0].fraction, 1, "progress never exceeds full")
+
+var zero = JobTimeline(steps: [])
+t.expectEqual(zero.overallFraction, 0, "an empty timeline is not a divide by zero")
+
+var fromCommands = JobTimeline(commands: ExportPlan.commands(
+  asin: "B1", options: ExportOptions(formats: [.markdown, .pdf]),
+  state: BookState(), workDir: "/w", userDataDir: "/s", destination: nil))
+t.expectEqual(
+  fromCommands.steps.map(\.step),
+  [.extractBook, .transcribe, .clean, .markdown, .pdf],
+  "a timeline can be built straight from the plan")
+
+fromCommands.finishAll()
+t.expectEqual(fromCommands.overallFraction, 1, "finishing all marks everything done")
+
+// MARK: - Copying the log
+
+t.expectEqual(LogClipboard.text(for: []), "", "an empty log copies nothing")
+t.expectEqual(
+  LogClipboard.text(for: ["wrote /tmp/book.md"]),
+  "wrote /tmp/book.md\n",
+  "a single line ends with a newline")
+t.expectEqual(
+  LogClipboard.text(for: ["step-start extract", "page 3/40", "done"]),
+  "step-start extract\npage 3/40\ndone\n",
+  "lines are joined in order, one per line")
+t.expectEqual(
+  LogClipboard.text(for: ["first", "", "third"]),
+  "first\n\nthird\n",
+  "a blank log line stays blank rather than collapsing")
+
 t.finish(suite: "KindleExportCore")

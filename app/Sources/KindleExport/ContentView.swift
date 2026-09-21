@@ -1,3 +1,4 @@
+import AppKit
 import KindleExportCore
 import SwiftUI
 
@@ -86,8 +87,9 @@ struct QueueList: View {
                     .buttonStyle(.link)
                     .font(.caption)
                 }
-                if let progress = job.progress {
-                  ProgressView(value: progress).controlSize(.small)
+                if !job.timeline.steps.isEmpty {
+                  JobTimelineView(timeline: job.timeline, compact: true)
+                    .padding(.top, 2)
                 }
               }
             }
@@ -223,6 +225,10 @@ struct LogDrawer: View {
   /// settled on its bottom anchor, and acting on it would drop out of
   /// following before the reader has touched anything.
   @State private var hasSettled = false
+  /// Identifies the most recent copy, so the confirmation on the button can
+  /// time out -- and a second copy can restart that timer -- without the view
+  /// owning a timer of its own.
+  @State private var lastCopy: UUID?
 
   private let scrollSpace = "log"
 
@@ -234,6 +240,20 @@ struct LogDrawer: View {
           .font(.caption2)
           .foregroundStyle(.tertiary)
         Spacer()
+        Button(lastCopy == nil ? "Copy" : "Copied") { copyWholeLog() }
+          .buttonStyle(.link)
+          .font(.caption)
+          .disabled(model.log.isEmpty)
+          // "Copied" is the wider word, so reserving its width keeps the
+          // neighbouring buttons from shuffling sideways for a second.
+          .frame(minWidth: 44)
+          .help("Copy every line of the log to the clipboard")
+          .task(id: lastCopy) {
+            guard lastCopy != nil else { return }
+            try? await Task.sleep(for: .seconds(1.5))
+            guard !Task.isCancelled else { return }
+            lastCopy = nil
+          }
         Button("Clear") { model.clearLog() }
           .buttonStyle(.link)
           .font(.caption)
@@ -256,10 +276,18 @@ struct LogDrawer: View {
           ScrollView {
             LazyVStack(alignment: .leading, spacing: 1) {
               ForEach(Array(model.log.enumerated()), id: \.offset) { entry in
+                // Each line is its own view, so `.textSelection` here would
+                // only ever select within one of them: dragging across lines
+                // silently keeps just the last one, and rows the lazy stack
+                // has discarded cannot be in a selection at all. Copying via
+                // the header button or this menu is the honest route.
                 Text(entry.element)
                   .font(.system(.caption, design: .monospaced))
-                  .textSelection(.enabled)
                   .frame(maxWidth: .infinity, alignment: .leading)
+                  .contextMenu {
+                    Button("Copy Line") { copy(entry.element) }
+                    Button("Copy Whole Log") { copyWholeLog() }
+                  }
                   .id(entry.offset)
               }
             }
@@ -291,6 +319,19 @@ struct LogDrawer: View {
       }
     }
     .background(.background.secondary)
+  }
+
+  private func copyWholeLog() {
+    copy(LogClipboard.text(for: model.log))
+    lastCopy = UUID()
+  }
+
+  private func copy(_ text: String) {
+    guard !text.isEmpty else { return }
+    // The pasteboard serves whatever its last owner wrote until the contents
+    // are cleared, so the clear has to come first or the write is dropped.
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(text, forType: .string)
   }
 
   /// Reports where the content sits inside the scroll view as it moves.

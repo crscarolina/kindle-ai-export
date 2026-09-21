@@ -116,6 +116,11 @@ final class ExportJob: Identifiable {
   let options: ExportOptions
   let destination: String
   var state: State = .queued
+  /// Every step this job will run, and how far each has got.
+  ///
+  /// Populated once the plan is known, which is when the job starts -- what
+  /// runs depends on what is already on disk.
+  var timeline = JobTimeline(steps: [])
 
   init(item: Book, options: ExportOptions, destination: String) {
     self.item = item
@@ -128,7 +133,7 @@ final class ExportJob: Identifiable {
     case .queued: "Queued"
     case .running(let step, let completed, let total):
       total > 0
-        ? "\(step.rawValue) \(completed)/\(total)" : "\(step.rawValue)…"
+        ? "\(step.displayName) \(completed)/\(total)" : "\(step.displayName)…"
     case .finished: "Done"
     case .failed(let message): "Failed — \(message)"
     case .cancelled: "Cancelled"
@@ -418,8 +423,11 @@ final class AppModel {
       userDataDir: settings.sessionDir,
       destination: job.destination)
 
+    job.timeline = JobTimeline(commands: commands)
+
     for command in commands {
       job.state = .running(step: command.step, completed: 0, total: 0)
+      job.timeline.start(command.step)
       do {
         try await consumingEvents(job: job) { emit in
           try await runner.run(
@@ -434,12 +442,16 @@ final class AppModel {
         return
       } catch {
         job.state = .failed(error.localizedDescription)
+        job.timeline.fail(command.step, error.localizedDescription)
         await notify(job, .failed(error.localizedDescription))
         return
       }
+
+      job.timeline.finish(command.step)
     }
 
     job.state = .finished
+    job.timeline.finishAll()
     // Only the artifacts the reader asked for, not the working files.
     await notify(
       job,
@@ -530,14 +542,17 @@ final class AppModel {
     case .page(let index, _, let total):
       if let job, job.isActive, case .running(let step, _, _) = job.state {
         job.state = .running(step: step, completed: index + 1, total: total)
+        job.timeline.advance(step, completed: index + 1, total: total)
       }
     case .stepStart(let step):
       if let job, job.isActive {
         job.state = .running(step: step, completed: 0, total: 0)
+        job.timeline.start(step)
       }
-      append("→ \(step.rawValue)")
+      append("→ \(step.displayName)")
     case .stepDone(let step):
-      append("✓ \(step.rawValue)")
+      job?.timeline.finish(step)
+      append("✓ \(step.displayName)")
     case .sessionExpired:
       needsSignIn = true
       append("Amazon session expired")

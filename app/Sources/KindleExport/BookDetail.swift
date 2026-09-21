@@ -63,12 +63,15 @@ struct BookDetail: View {
               || isExporting)
 
           if let job = currentJob {
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 10) {
               Text(statusText(for: job))
                 .font(.caption)
                 .foregroundStyle(statusColor(job.state))
-              if let progress = job.progress {
-                ProgressView(value: progress).controlSize(.small)
+
+              // Empty until the job starts, because what runs depends on
+              // what is already on disk.
+              if !job.timeline.steps.isEmpty {
+                JobTimelineView(timeline: job.timeline)
               }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
