@@ -1,6 +1,10 @@
 import { describe, expect, test } from 'vitest'
 
-import { normalizeLibraryItems } from './library'
+import {
+  buildLibrarySearchUrl,
+  mergeLibraryPages,
+  normalizeLibraryItems
+} from './library'
 
 describe('normalizeLibraryItems', () => {
   test('maps a library search response to library items', () => {
@@ -97,5 +101,88 @@ describe('normalizeLibraryItems', () => {
         ]
       })
     ).toHaveLength(1)
+  })
+})
+
+describe('buildLibrarySearchUrl', () => {
+  test('builds a first-page request', () => {
+    const url = buildLibrarySearchUrl({})
+    expect(url).toContain('/kindle-library/search')
+    expect(url).toContain('libraryType=BOOKS')
+    expect(url).toContain('sortType=recency')
+  })
+
+  test('omits the pagination token on the first page', () => {
+    expect(buildLibrarySearchUrl({})).not.toContain('paginationToken')
+  })
+
+  test('includes the pagination token on later pages', () => {
+    expect(buildLibrarySearchUrl({ paginationToken: '41' })).toContain(
+      'paginationToken=41'
+    )
+  })
+
+  test('escapes a token containing url syntax', () => {
+    expect(buildLibrarySearchUrl({ paginationToken: 'a&b=c' })).toContain(
+      'paginationToken=a%26b%3Dc'
+    )
+  })
+
+  test('carries a search query through', () => {
+    expect(buildLibrarySearchUrl({ query: 'dune' })).toContain('query=dune')
+  })
+})
+
+describe('mergeLibraryPages', () => {
+  const pageOne = {
+    itemsList: [
+      { asin: 'B000000001', title: 'One' },
+      { asin: 'B000000002', title: 'Two' }
+    ]
+  }
+  const pageTwo = {
+    itemsList: [
+      { asin: 'B000000003', title: 'Three' },
+      { asin: 'B000000004', title: 'Four' }
+    ]
+  }
+
+  test('concatenates pages in order', () => {
+    expect(
+      mergeLibraryPages([pageOne, pageTwo]).map((item) => item.title)
+    ).toEqual(['One', 'Two', 'Three', 'Four'])
+  })
+
+  test('de-duplicates across page boundaries', () => {
+    // Amazon repeats items between pages; 245 responses held 234 books.
+    const overlapping = {
+      itemsList: [
+        { asin: 'B000000002', title: 'Two again' },
+        { asin: 'B000000003', title: 'Three' }
+      ]
+    }
+    const merged = mergeLibraryPages([pageOne, overlapping])
+    expect(merged).toHaveLength(3)
+    expect(merged.map((item) => item.asin)).toEqual([
+      'B000000001',
+      'B000000002',
+      'B000000003'
+    ])
+  })
+
+  test('keeps the first occurrence of a repeated book', () => {
+    const merged = mergeLibraryPages([
+      pageOne,
+      { itemsList: [{ asin: 'B000000001', title: 'Renamed' }] }
+    ])
+    expect(merged[0]!.title).toBe('One')
+  })
+
+  test('skips pages with no items', () => {
+    expect(mergeLibraryPages([pageOne, {}, pageTwo])).toHaveLength(4)
+  })
+
+  test('returns nothing for no pages', () => {
+    expect(mergeLibraryPages([])).toEqual([])
   })
 })

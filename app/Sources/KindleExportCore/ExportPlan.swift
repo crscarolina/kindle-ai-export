@@ -10,17 +10,21 @@ public struct ExportOptions: Equatable, Sendable {
   public var force: Bool
   /// Cap pages, for previewing a book without a full run.
   public var limit: Int?
+  /// Kokoro voice id for narration.
+  public var voice: String
 
   public init(
     formats: Set<ExportStep> = [.markdown],
     clean: Bool = true,
     force: Bool = false,
-    limit: Int? = nil
+    limit: Int? = nil,
+    voice: String = "af_heart"
   ) {
     self.formats = formats
     self.clean = clean
     self.force = force
     self.limit = limit
+    self.voice = voice
   }
 }
 
@@ -88,7 +92,8 @@ public enum ExportPlan {
       commands.append(
         ExportCommand(
           step: step, asin: asin, workDir: workDir, userDataDir: userDataDir,
-          outFile: outFile, limit: options.limit, force: options.force))
+          outFile: outFile, limit: options.limit, force: options.force,
+          voice: options.voice))
     }
 
     // A preview run leaves a deliberately partial working set behind, so it
@@ -127,7 +132,7 @@ public enum ExportPlan {
     switch step {
     case .markdown: ".md"
     case .pdf: ".pdf"
-    case .audio: ".wav"
+    case .audio: ".m4b"
     default: ""
     }
   }

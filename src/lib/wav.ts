@@ -193,3 +193,52 @@ export async function joinWavFiles(
     await out.close()
   }
 }
+
+/**
+ * Convert a float32 WAV to 16-bit PCM.
+ *
+ * Kokoro emits 32-bit float, which is an intermediate format: it exists so
+ * audio can be processed without clipping. For finished speech it is twice
+ * the size for no audible gain, so anything written out for listening is
+ * converted first. Already-16-bit input is returned untouched.
+ */
+export function toPcm16(buf: Buffer): Buffer {
+  const wav = parseWav(buf)
+  if (wav.audioFormat === 1 && wav.bitsPerSample === 16) {
+    return buf
+  }
+
+  if (wav.audioFormat !== 3 || wav.bitsPerSample !== 32) {
+    throw new Error(
+      `cannot convert format ${wav.audioFormat} at ${wav.bitsPerSample} bits`
+    )
+  }
+
+  const sampleCount = Math.floor(wav.data.length / 4)
+  const out = Buffer.alloc(sampleCount * 2)
+
+  for (let i = 0; i < sampleCount; i++) {
+    // Clamp rather than let the value wrap: a wrapped peak is a loud click.
+    const sample = Math.max(-1, Math.min(1, wav.data.readFloatLE(i * 4)))
+    out.writeInt16LE(Math.round(sample * 32_767), i * 2)
+  }
+
+  return encodeWav(out, {
+    sampleRate: wav.sampleRate,
+    channels: wav.channels,
+    bitsPerSample: 16,
+    audioFormat: 1
+  })
+}
+
+/**
+ * How long a WAV runs, from its header alone.
+ *
+ * Chapter markers need the narration time of each page, and reading it off
+ * the header avoids decoding audio just to measure it.
+ */
+export function wavDurationSeconds(buf: Buffer): number {
+  const wav = parseWav(buf)
+  const byteRate = (wav.sampleRate * wav.channels * wav.bitsPerSample) / 8
+  return byteRate > 0 ? wav.data.length / byteRate : 0
+}

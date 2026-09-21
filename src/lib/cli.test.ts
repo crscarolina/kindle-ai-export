@@ -252,3 +252,49 @@ describe('parseLibraryCliArgs asin filter', () => {
     expect(() => parseLibraryCliArgs(['--asin', 'nope'], env)).toThrow(/asin/i)
   })
 })
+
+describe('parseCliArgs voice', () => {
+  test('defaults to the flagship voice', () => {
+    expect(parseCliArgs(['--asin', asin], {}).voice).toBe('af_heart')
+  })
+
+  test('accepts a voice id', () => {
+    expect(
+      parseCliArgs(['--asin', asin, '--voice', 'bm_george'], {}).voice
+    ).toBe('bm_george')
+  })
+
+  test('accepts a voice by name, case-insensitively', () => {
+    // "--voice George" is what someone reading the picker would type.
+    expect(parseCliArgs(['--asin', asin, '--voice', 'george'], {}).voice).toBe(
+      'bm_george'
+    )
+  })
+
+  test('falls back to the KOKORO_VOICE env var', () => {
+    expect(
+      parseCliArgs(['--asin', asin], { KOKORO_VOICE: 'af_bella' }).voice
+    ).toBe('af_bella')
+  })
+
+  test('prefers the flag over the env var', () => {
+    expect(
+      parseCliArgs(['--asin', asin, '--voice', 'af_bella'], {
+        KOKORO_VOICE: 'am_adam'
+      }).voice
+    ).toBe('af_bella')
+  })
+
+  test('rejects an unknown voice', () => {
+    expect(() =>
+      parseCliArgs(['--asin', asin, '--voice', 'af_nobody'], {})
+    ).toThrow(/af_nobody/)
+  })
+
+  test('names some valid voices when rejecting one', () => {
+    // An error that only says "invalid" leaves you guessing.
+    expect(() =>
+      parseCliArgs(['--asin', asin, '--voice', 'af_nobody'], {})
+    ).toThrow(/af_heart/)
+  })
+})

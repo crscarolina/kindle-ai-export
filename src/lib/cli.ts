@@ -2,6 +2,7 @@ import path from 'node:path'
 
 import { parseAsin } from './asin'
 import { sessionDir } from './paths'
+import { DEFAULT_VOICE, findVoice, VOICES } from './voices'
 
 /** Resolved options for listing the reader's Kindle library. */
 export type LibraryCliOptions = {
@@ -15,6 +16,10 @@ export type LibraryCliOptions = {
   limit: number | undefined
   /** Restrict to these books, rather than the whole library. */
   asins: string[] | undefined
+  /** Restrict to a single Kokoro voice. */
+  voice: string | undefined
+  /** Redo work that has already been completed. */
+  force: boolean
 }
 
 /** Fully resolved options for a pipeline script. */
@@ -34,6 +39,8 @@ export type CliOptions = {
   force: boolean
   /** Process at most this many pages. Useful for previewing a long book. */
   limit: number | undefined
+  /** Kokoro voice id for narration. */
+  voice: string
 }
 
 const VALUE_FLAGS = new Set([
@@ -41,7 +48,8 @@ const VALUE_FLAGS = new Set([
   '--work-dir',
   '--user-data-dir',
   '--out-file',
-  '--limit'
+  '--limit',
+  '--voice'
 ])
 const BOOLEAN_FLAGS = new Set(['--json', '--force'])
 
@@ -104,7 +112,9 @@ export function parseLibraryCliArgs(
     outFile: value('--out-file'),
     json: flags.get('--json') === true,
     limit: parseLimit(value('--limit')),
-    asins: parseAsinList(value('--asin'))
+    asins: parseAsinList(value('--asin')),
+    voice: value('--voice') ? parseVoice(value('--voice')) : undefined,
+    force: flags.get('--force') === true || env.FORCE === 'true'
   }
 }
 
@@ -131,6 +141,34 @@ function parseAsinList(raw: string | undefined): string[] | undefined {
       }
       return asin
     })
+}
+
+/**
+ * Resolve a voice by id or by name.
+ *
+ * Accepts the name shown in the picker as well as the id, since that is what
+ * someone reading the catalogue is likely to type.
+ */
+function parseVoice(raw: string | undefined): string {
+  if (!raw) {
+    return DEFAULT_VOICE
+  }
+
+  const wanted = raw.trim().toLowerCase()
+  const voice =
+    findVoice(wanted) ??
+    VOICES.find((candidate) => candidate.name.toLowerCase() === wanted)
+
+  if (!voice) {
+    const examples = VOICES.slice(0, 4)
+      .map((candidate) => candidate.id)
+      .join(', ')
+    throw new Error(
+      `Unknown voice: ${raw}. Try one of ${examples}, ... (see src/lib/voices.ts for all ${VOICES.length})`
+    )
+  }
+
+  return voice.id
 }
 
 function parseLimit(raw: string | undefined): number | undefined {
@@ -186,6 +224,7 @@ export function parseCliArgs(
     outFile: value('--out-file'),
     json: flags.get('--json') === true,
     force: flags.get('--force') === true || env.FORCE === 'true',
-    limit: parseLimit(value('--limit'))
+    limit: parseLimit(value('--limit')),
+    voice: parseVoice(value('--voice') ?? env.KOKORO_VOICE)
   }
 }

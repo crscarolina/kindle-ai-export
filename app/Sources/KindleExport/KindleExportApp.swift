@@ -9,9 +9,13 @@ struct KindleExportApp: App {
     WindowGroup("Kindle Export") {
       ContentView(model: model)
         .frame(minWidth: 1000, minHeight: 640)
-        .task { model.loadCachedLibrary() }
+        .task {
+          model.loadCachedLibrary()
+          await model.loadVoices()
+        }
     }
     .defaultSize(width: 1180, height: 760)
+    .windowStyle(.hiddenTitleBar)
 
     Settings {
       SettingsView(model: model)

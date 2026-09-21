@@ -13,6 +13,8 @@ public struct ExportCommand: Equatable, Sendable {
   public let outFile: String?
   public let limit: Int?
   public let force: Bool
+  /// Kokoro voice id, for the narration step.
+  public let voice: String?
 
   public init(
     step: ExportStep,
@@ -21,7 +23,8 @@ public struct ExportCommand: Equatable, Sendable {
     userDataDir: String,
     outFile: String? = nil,
     limit: Int? = nil,
-    force: Bool = false
+    force: Bool = false,
+    voice: String? = nil
   ) {
     self.step = step
     self.asin = asin
@@ -30,6 +33,7 @@ public struct ExportCommand: Equatable, Sendable {
     self.outFile = outFile
     self.limit = limit
     self.force = force
+    self.voice = voice
   }
 
   /// The script this step runs, relative to the repo root.
@@ -62,6 +66,10 @@ public struct ExportCommand: Equatable, Sendable {
     }
     if force {
       args.append("--force")
+    }
+    // Only the narration step understands a voice.
+    if let voice, step == .audio {
+      args += ["--voice", voice]
     }
 
     return args

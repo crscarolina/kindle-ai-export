@@ -52,3 +52,57 @@ export function normalizeLibraryItems(response: unknown): LibraryItem[] {
 
   return items
 }
+
+/**
+ * Amazon caps a library page at 50 regardless of the requested size, and
+ * returns a `paginationToken` for the next one.
+ */
+export const LIBRARY_PAGE_SIZE = 50
+
+/** Build one page of the library search request. */
+export function buildLibrarySearchUrl({
+  query = '',
+  querySize = LIBRARY_PAGE_SIZE,
+  sortType = 'recency',
+  paginationToken
+}: {
+  query?: string
+  querySize?: number
+  sortType?: string
+  paginationToken?: string
+}): string {
+  const params = new URLSearchParams({
+    query,
+    libraryType: 'BOOKS',
+    sortType,
+    querySize: String(querySize)
+  })
+
+  if (paginationToken) {
+    params.set('paginationToken', paginationToken)
+  }
+
+  return `/kindle-library/search?${params}`
+}
+
+/**
+ * Flatten every page into one library, keeping order.
+ *
+ * Pages overlap -- a 234-book library came back as 245 items across five
+ * requests -- so the first sighting of a book wins and later repeats are
+ * dropped.
+ */
+export function mergeLibraryPages(responses: unknown[]): LibraryItem[] {
+  const seen = new Set<string>()
+  const merged: LibraryItem[] = []
+
+  for (const response of responses) {
+    for (const item of normalizeLibraryItems(response)) {
+      if (seen.has(item.asin)) continue
+      seen.add(item.asin)
+      merged.push(item)
+    }
+  }
+
+  return merged
+}

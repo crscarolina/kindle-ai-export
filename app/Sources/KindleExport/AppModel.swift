@@ -148,10 +148,14 @@ final class ExportJob: Identifiable {
 final class AppModel {
   var settings = AppSettings()
   var library: [Book] = []
-  var search = ""
+  var search = "" {
+    didSet { if search != oldValue { resetPaging() } }
+  }
   var selectedAsin: String?
   var jobs: [ExportJob] = []
   var log: [String] = []
+  var showLog = false
+  var voices: [VoiceOption] = []
   var status: String?
   var isBusy = false
   /// Set when Amazon's session lapses; pauses the queue rather than failing it.
@@ -169,6 +173,31 @@ final class AppModel {
     }
   }
 
+  /// How many covers to render.
+  ///
+  /// A 234-book library would otherwise start 234 image loads the moment the
+  /// grid appears, so rows are added as the reader scrolls towards them.
+  static let pageSize = 60
+  var visibleCount = pageSize
+
+  var visibleLibrary: [Book] {
+    Array(filteredLibrary.prefix(visibleCount))
+  }
+
+  var hasMoreToShow: Bool {
+    visibleCount < filteredLibrary.count
+  }
+
+  func showMore() {
+    guard hasMoreToShow else { return }
+    visibleCount = min(visibleCount + Self.pageSize, filteredLibrary.count)
+  }
+
+  /// Start again from the top whenever the visible set changes underneath.
+  func resetPaging() {
+    visibleCount = Self.pageSize
+  }
+
   var selectedItem: Book? {
     library.first { $0.asin == selectedAsin }
   }
@@ -177,6 +206,54 @@ final class AppModel {
 
   private var libraryCachePath: String {
     settings.workDir + "/library.json"
+  }
+
+  private var voicesCachePath: String {
+    settings.workDir + "/voices.json"
+  }
+
+  var previewsDir: String { settings.workDir + "/previews" }
+
+  /// The clip auditioning the currently selected voice, if it exists.
+  var selectedVoicePreview: URL? {
+    let url = URL(fileURLWithPath: previewsDir)
+      .appending(path: "\(options.voice).m4b")
+    return FileManager.default.fileExists(atPath: url.path(percentEncoded: false))
+      ? url
+      : nil
+  }
+
+  var selectedVoice: VoiceOption? {
+    voices.first { $0.id == options.voice }
+  }
+
+  // MARK: - Voices
+
+  func loadVoices() async {
+    if let data = FileManager.default.contents(atPath: voicesCachePath),
+      let cached = try? JSONDecoder().decode([VoiceOption].self, from: data)
+    {
+      voices = cached
+      return
+    }
+
+    guard settings.isConfigured else { return }
+
+    // Cheap: no browser, no model -- it only prints the catalogue.
+    try? await runner.runScript(
+      "src/list-voices.ts",
+      arguments: ["--out-file", voicesCachePath, "--json"]
+    ) { _ in }
+
+    if let data = FileManager.default.contents(atPath: voicesCachePath),
+      let loaded = try? JSONDecoder().decode([VoiceOption].self, from: data)
+    {
+      voices = loaded
+    }
+  }
+
+  func clearLog() {
+    log.removeAll()
   }
 
   // MARK: - Library
@@ -214,6 +291,7 @@ final class AppModel {
       }
 
       loadCachedLibrary()
+      resetPaging()
       status = "\(library.count) books"
     } catch CLIRunnerError.sessionExpired {
       needsSignIn = true
@@ -259,6 +337,10 @@ final class AppModel {
     startPumpIfNeeded()
   }
 
+  func clearFinishedJobs() {
+    jobs.removeAll { $0.isFinished }
+  }
+
   func remove(_ job: ExportJob) {
     if case .running = job.state { return }
     jobs.removeAll { $0.id == job.id }
@@ -295,6 +377,7 @@ final class AppModel {
   }
 
   private func run(_ job: ExportJob) async {
+    clearLog()
     let state = inspect(asin: job.item.asin)
     let commands = ExportPlan.commands(
       asin: job.item.asin,
@@ -441,6 +524,14 @@ extension ExportJob {
     switch state {
     case .queued, .running: true
     case .finished, .failed, .cancelled: false
+    }
+  }
+
+  /// Done with, one way or another.
+  var isFinished: Bool {
+    switch state {
+    case .finished, .failed, .cancelled: true
+    case .queued, .running: false
     }
   }
 }

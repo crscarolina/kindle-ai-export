@@ -21,9 +21,15 @@ struct BookDetail: View {
           Toggle("Audiobook", isOn: binding(for: .audio))
 
           if model.options.formats.contains(.audio) {
-            Text("Narrated locally with Kokoro. A full novel takes hours.")
+            Text("Narrated locally with Kokoro as an M4B audiobook, with chapters from the table of contents. A full novel takes hours.")
               .font(.caption)
               .foregroundStyle(.secondary)
+          }
+        }
+
+        if model.options.formats.contains(.audio) {
+          Section("Narrator") {
+            VoicePicker(model: model)
           }
         }
 

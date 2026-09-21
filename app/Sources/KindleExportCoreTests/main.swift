@@ -176,6 +176,44 @@ t.expect(
 t.expect(
   !base.arguments.contains("--out-file"), "omits out-file by default")
 
+// MARK: - Voice selection
+
+t.expect(
+  ExportCommand(
+    step: .audio, asin: "A", workDir: "/w", userDataDir: "/s", voice: "bm_george"
+  ).arguments.contains("--voice"),
+  "narration is given a voice")
+
+t.expectEqual(
+  ExportCommand(
+    step: .audio, asin: "A", workDir: "/w", userDataDir: "/s", voice: "bm_george"
+  ).arguments.suffix(2).map { $0 },
+  ["--voice", "bm_george"], "the chosen voice is passed through")
+
+// Only the narration step understands the flag; the others would reject it.
+for step in ExportStep.allCases where step != .audio {
+  t.expect(
+    !ExportCommand(
+      step: step, asin: "A", workDir: "/w", userDataDir: "/s", voice: "bm_george"
+    ).arguments.contains("--voice"),
+    "\(step.rawValue) is not given a voice")
+}
+
+t.expect(
+  !ExportCommand(step: .audio, asin: "A", workDir: "/w", userDataDir: "/s")
+    .arguments.contains("--voice"),
+  "no voice flag when none was chosen")
+
+t.expectEqual(
+  ExportPlan.commands(
+    asin: "B1", options: ExportOptions(formats: [.audio], voice: "af_bella"),
+    state: BookState(), workDir: "/w", userDataDir: "/s", destination: nil
+  ).first(where: { $0.step == .audio })?.voice,
+  "af_bella", "the plan carries the chosen voice to narration")
+
+t.expectEqual(
+  ExportOptions().voice, "af_heart", "the flagship voice is the default")
+
 // MARK: - ExportPlan
 
 func steps(
@@ -293,7 +331,7 @@ t.expect(
 
 t.expectEqual(
   ExportPlan.artifactPath(in: "/Books", step: .audio, asin: "B1"),
-  "/Books/B1.wav", "audio lands as a wav")
+  "/Books/B1.m4b", "audio lands as an m4b audiobook")
 
 // MARK: - CLIRunner (integration)
 //

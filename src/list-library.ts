@@ -6,7 +6,11 @@ import path from 'node:path'
 import { launchKindleContext } from './lib/browser'
 import { parseLibraryCliArgs } from './lib/cli'
 import { createReporter } from './lib/events'
-import { normalizeLibraryItems } from './lib/library'
+import {
+  buildLibrarySearchUrl,
+  LIBRARY_PAGE_SIZE,
+  mergeLibraryPages
+} from './lib/library'
 
 const LIBRARY_URL = 'https://read.amazon.com/kindle-library'
 
@@ -35,15 +39,35 @@ async function main() {
       return
     }
 
-    const response = await page.evaluate(async (querySize) => {
-      const res = await fetch(
-        `/kindle-library/search?query=&libraryType=BOOKS&sortType=recency&querySize=${querySize}`,
-        { credentials: 'include' }
-      )
-      return res.json()
-    }, opts.limit ?? 500)
+    // Amazon caps a page at 50 and hands back a token for the next, so the
+    // whole library takes several requests.
+    const pages: unknown[] = []
+    let paginationToken: string | undefined
 
-    const items = normalizeLibraryItems(response)
+    for (;;) {
+      const body: any = await page.evaluate(
+        (url) =>
+          fetch(url, { credentials: 'include' }).then((res) => res.json()),
+        buildLibrarySearchUrl({ paginationToken })
+      )
+
+      pages.push(body)
+      const count = body?.itemsList?.length ?? 0
+      reporter.emit({
+        event: 'page',
+        index: pages.length - 1,
+        page: pages.length,
+        total: pages.length + (body?.paginationToken ? 1 : 0)
+      })
+
+      paginationToken = body?.paginationToken
+      if (!paginationToken || count < LIBRARY_PAGE_SIZE) break
+      if (opts.limit && pages.length * LIBRARY_PAGE_SIZE >= opts.limit) break
+    }
+
+    const merged = mergeLibraryPages(pages)
+    const items = opts.limit ? merged.slice(0, opts.limit) : merged
+    reporter.log(`${items.length} books across ${pages.length} pages`)
     const outFile = opts.outFile
 
     if (outFile) {

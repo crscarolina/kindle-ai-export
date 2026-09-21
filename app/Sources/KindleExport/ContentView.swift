@@ -1,44 +1,37 @@
 import KindleExportCore
 import SwiftUI
 
+/// Width of the detail pane.
+///
+/// Fixed rather than draggable so the search field in the top bar can be
+/// exactly as wide as the library pane beneath it, the way Finder's toolbar
+/// lines up with its columns.
+let detailPaneWidth: CGFloat = 380
+
 struct ContentView: View {
   @Bindable var model: AppModel
 
   var body: some View {
-    NavigationSplitView {
-      QueueSidebar(model: model)
-        .navigationSplitViewColumnWidth(min: 220, ideal: 260)
-    } detail: {
-      VStack(spacing: 0) {
-        if model.needsSignIn {
-          SignInBanner(model: model)
-        }
+    VStack(spacing: 0) {
+      TopBar(model: model)
+      Divider()
 
-        HSplitView {
-          LibraryGrid(model: model)
-            .frame(minWidth: 420)
-          BookDetail(model: model)
-            .frame(minWidth: 320, maxWidth: 420)
-        }
+      if model.needsSignIn {
+        SignInBanner(model: model)
+      }
 
+      HStack(spacing: 0) {
+        LibraryGrid(model: model)
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
+        Divider()
+        BookDetail(model: model)
+          .frame(width: detailPaneWidth)
+      }
+
+      if model.showLog {
         Divider()
         LogDrawer(model: model)
-          .frame(height: 160)
-      }
-    }
-    .toolbar {
-      ToolbarItem(placement: .principal) {
-        TextField("Search library", text: $model.search)
-          .textFieldStyle(.roundedBorder)
-          .frame(width: 240)
-      }
-      ToolbarItem {
-        Button {
-          Task { await model.refreshLibrary() }
-        } label: {
-          Label("Refresh", systemImage: "arrow.clockwise")
-        }
-        .disabled(model.isBusy)
+          .frame(height: 180)
       }
     }
     .overlay(alignment: .bottom) {
@@ -50,6 +43,68 @@ struct ContentView: View {
           .background(.thinMaterial, in: Capsule())
           .padding(.bottom, 12)
       }
+    }
+  }
+}
+
+struct QueueList: View {
+  @Bindable var model: AppModel
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 0) {
+      HStack {
+        Text("Export Queue").font(.headline)
+        Spacer()
+        if model.jobs.contains(where: { $0.isFinished }) {
+          Button("Clear Finished") { model.clearFinishedJobs() }
+            .buttonStyle(.link)
+            .font(.caption)
+        }
+      }
+      .padding(12)
+
+      Divider()
+
+      if model.jobs.isEmpty {
+        Text("Nothing queued")
+          .font(.callout)
+          .foregroundStyle(.secondary)
+          .frame(maxWidth: .infinity, alignment: .center)
+          .padding(.vertical, 28)
+      } else {
+        ScrollView {
+          VStack(alignment: .leading, spacing: 10) {
+            ForEach(model.jobs) { job in
+              VStack(alignment: .leading, spacing: 4) {
+                Text(job.item.title).font(.callout).lineLimit(2)
+                HStack(spacing: 8) {
+                  Text(job.statusText)
+                    .font(.caption)
+                    .foregroundStyle(statusColor(job.state))
+                  Spacer()
+                  Button("Remove", role: .destructive) { model.remove(job) }
+                    .buttonStyle(.link)
+                    .font(.caption)
+                }
+                if let progress = job.progress {
+                  ProgressView(value: progress).controlSize(.small)
+                }
+              }
+            }
+          }
+          .padding(12)
+        }
+      }
+    }
+    .frame(width: 340)
+    .frame(maxHeight: 420)
+  }
+
+  private func statusColor(_ state: ExportJob.State) -> Color {
+    switch state {
+    case .failed: .red
+    case .finished: .green
+    default: .secondary
     }
   }
 }
@@ -76,7 +131,7 @@ struct SignInBanner: View {
 struct LibraryGrid: View {
   @Bindable var model: AppModel
 
-  private let columns = [GridItem(.adaptive(minimum: 130), spacing: 16)]
+  private let columns = [GridItem(.adaptive(minimum: 132), spacing: 18)]
 
   var body: some View {
     ScrollView {
@@ -84,16 +139,37 @@ struct LibraryGrid: View {
         ContentUnavailableView(
           "No books",
           systemImage: "books.vertical",
-          description: Text("Refresh to load your Kindle library."))
-          .padding(.top, 60)
+          description: Text("Refresh to load your Kindle library.")
+        )
+        .padding(.top, 80)
       } else {
-        LazyVGrid(columns: columns, spacing: 18) {
-          ForEach(model.filteredLibrary) { item in
+        LazyVGrid(columns: columns, spacing: 20) {
+          ForEach(model.visibleLibrary) { item in
             BookCell(item: item, isSelected: item.asin == model.selectedAsin)
               .onTapGesture { model.selectedAsin = item.asin }
           }
         }
-        .padding(16)
+        .padding(18)
+
+        if model.hasMoreToShow {
+          // Rendering this sentinel means the reader has scrolled to the end
+          // of what is loaded, so the next rows are added.
+          HStack(spacing: 8) {
+            ProgressView().controlSize(.small)
+            Text("\(model.filteredLibrary.count - model.visibleCount) more")
+              .font(.caption)
+              .foregroundStyle(.secondary)
+          }
+          .frame(maxWidth: .infinity)
+          .padding(.vertical, 20)
+          .onAppear { model.showMore() }
+        } else if model.filteredLibrary.count > AppModel.pageSize {
+          Text("\(model.filteredLibrary.count) books")
+            .font(.caption)
+            .foregroundStyle(.tertiary)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 16)
+        }
       }
     }
   }
@@ -115,7 +191,7 @@ struct BookCell: View {
           }
         }
       }
-      .frame(height: 180)
+      .frame(height: 186)
       .clipShape(RoundedRectangle(cornerRadius: 6))
       .overlay {
         RoundedRectangle(cornerRadius: 6)
@@ -128,5 +204,55 @@ struct BookCell: View {
         .foregroundStyle(.secondary)
         .lineLimit(1)
     }
+  }
+}
+
+struct LogDrawer: View {
+  @Bindable var model: AppModel
+
+  var body: some View {
+    VStack(spacing: 0) {
+      HStack {
+        Text("Log").font(.caption).foregroundStyle(.secondary)
+        Text("\(model.log.count)")
+          .font(.caption2)
+          .foregroundStyle(.tertiary)
+        Spacer()
+        Button("Clear") { model.clearLog() }
+          .buttonStyle(.link)
+          .font(.caption)
+          .disabled(model.log.isEmpty)
+        Button {
+          model.showLog = false
+        } label: {
+          Image(systemName: "xmark")
+        }
+        .buttonStyle(.plain)
+        .help("Hide the log")
+      }
+      .padding(.horizontal, 10)
+      .padding(.vertical, 5)
+
+      Divider()
+
+      ScrollViewReader { proxy in
+        ScrollView {
+          LazyVStack(alignment: .leading, spacing: 1) {
+            ForEach(Array(model.log.enumerated()), id: \.offset) { entry in
+              Text(entry.element)
+                .font(.system(.caption, design: .monospaced))
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .id(entry.offset)
+            }
+          }
+          .padding(8)
+        }
+        .onChange(of: model.log.count) { _, count in
+          proxy.scrollTo(count - 1, anchor: .bottom)
+        }
+      }
+    }
+    .background(.background.secondary)
   }
 }
