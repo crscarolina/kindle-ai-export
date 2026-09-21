@@ -20,10 +20,11 @@ import type {
   BookMetadata,
   TocItem
 } from './types'
+import { createBookIndex } from './lib/book-index'
 import { parseCliArgs } from './lib/cli'
 import { createReporter } from './lib/events'
 import { planExtractionResume, scanCompletedPages } from './lib/resume'
-import { parsePageNav, parseTocItems } from './playwright-utils'
+import { navUnitValue, parsePageNav, parseTocItems } from './playwright-utils'
 import {
   assert,
   extractTar,
@@ -75,6 +76,7 @@ async function main() {
     pages: [],
     // locationMap: { locations: [], navigationUnit: [] },
     nav: {
+      unit: 'page',
       startPosition: -1,
       endPosition: -1,
       startContentPosition: -1,
@@ -85,6 +87,8 @@ async function main() {
       totalNumContentPages: -1
     }
   }
+
+  let bookIndex: ReturnType<typeof createBookIndex> | undefined
 
   // Fallback source for book meta, since Kindle's reader no longer fetches
   // `YJmetadata.jsonp`
@@ -369,11 +373,11 @@ async function main() {
     await page.locator('ion-button[aria-label="Reader menu"]').click()
     await delay(500)
     await page
-      .locator('ion-item[role="listitem"]', { hasText: 'Go to Page' })
+      .locator('ion-item[role="listitem"]')
+      .filter({ hasText: /go to (page|location)/i })
+      .first()
       .click()
-    await page
-      .locator('ion-modal input[placeholder="page number"]')
-      .fill(`${pageNumber}`)
+    await page.locator('ion-modal input').first().fill(`${pageNumber}`)
     // await page.locator('ion-modal button', { hasText: 'Go' }).click()
     await page
       .locator('ion-modal ion-button[item-i-d="go-to-modal-go-button"]')
@@ -459,17 +463,10 @@ async function main() {
   function getPageForPosition(position: number): number {
     if (!result.locationMap) return -1
 
-    let resultPage = 1
-
-    // TODO: this is O(n) but we can do better
-    for (const { startPosition, page } of result.locationMap.navigationUnit ??
-      []) {
-      if (startPosition > position) break
-
-      resultPage = page
-    }
-
-    return resultPage
+    // Built lazily: the location map arrives from a network response, so it
+    // isn't available when this closure is created.
+    bookIndex ??= createBookIndex(result.locationMap)
+    return bookIndex.unitForPosition(position)
   }
 
   await dismissPossibleAlert()
@@ -526,19 +523,21 @@ async function main() {
   assert(result.toc?.length, 'expected book toc to be initialized')
   assert(result.locationMap, 'expected book location map to be initialized')
 
-  assert(
-    result.locationMap.navigationUnit?.length,
-    `"${result.meta.title}" has no page-number mapping: Amazon returned a location map with no navigationUnit, which means this title has no print-edition pagination. Exporting it would need position-based extraction, which isn't supported yet.`
-  )
+  bookIndex ??= createBookIndex(result.locationMap)
+  result.nav.unit = bookIndex.unit
+
+  if (bookIndex.unit === 'location') {
+    reporter.log(
+      `"${result.meta.title}" has no print-edition pagination; indexing by Kindle location instead`
+    )
+  }
 
   result.nav.startContentPosition = result.meta.startPosition
-  result.nav.totalNumPages = result.locationMap.navigationUnit.reduce(
-    (acc, navUnit) => {
-      return Math.max(acc, navUnit.page ?? -1)
-    },
-    -1
+  result.nav.totalNumPages = bookIndex.total
+  assert(
+    result.nav.totalNumPages > 0,
+    `parsed book nav has no ${bookIndex.unit}s`
   )
-  assert(result.nav.totalNumPages > 0, 'parsed book nav has no pages')
   result.nav.startContentPage = getPageForPosition(
     result.nav.startContentPosition
   )
@@ -597,19 +596,21 @@ async function main() {
   await goToPage(resumePlan.resumePage ?? result.nav.startContentPage)
 
   let done = false
-  console.warn(
-    `\nreading ${result.nav.totalNumContentPages} content pages out of ${result.nav.totalNumPages} total pages...\n`
+  reporter.log(
+    `reading ${result.nav.totalNumContentPages} content ${result.nav.unit}s out of ${result.nav.totalNumPages} total`
   )
 
   // Loop through each page of the book
   do {
     const pageNav = await getPageNav()
 
-    if (pageNav?.page === undefined) {
+    const navValue = navUnitValue(pageNav)
+
+    if (navValue === undefined) {
       break
     }
 
-    if (pageNav.page > result.nav.totalNumContentPages) {
+    if (navValue > result.nav.totalNumContentPages) {
       break
     }
 
@@ -647,7 +648,7 @@ async function main() {
 
       assert(
         blob,
-        `no blob found for src: ${src} (index ${index}; page ${pageNav.page})`
+        `no blob found for src: ${src} (index ${index}; ${result.nav.unit} ${navValue})`
       )
 
       const rawRenderedImage = Buffer.from(blob.base64, 'base64')
@@ -668,25 +669,25 @@ async function main() {
 
     assert(
       renderedPageImageBuffer,
-      `no buffer found for src: ${src} (index ${index}; page ${pageNav.page})`
+      `no buffer found for src: ${src} (index ${index}; ${result.nav.unit} ${navValue})`
     )
 
     const screenshotPath = path.join(
       pageScreenshotsDir,
-      screenshotName(index, pageNav.page)
+      screenshotName(index, navValue)
     )
 
     await fs.writeFile(screenshotPath, renderedPageImageBuffer)
     const pageChunk = {
       index,
-      page: pageNav.page,
+      page: navValue,
       screenshot: screenshotPath
     }
     result.pages.push(pageChunk)
     reporter.emit({
       event: 'page',
       index,
-      page: pageNav.page,
+      page: navValue,
       total: opts.limit ?? result.nav.totalNumContentPages
     })
     await writeResultMetadata()
@@ -746,10 +747,13 @@ async function main() {
   reporter.emit({ event: 'step-done', step: 'extract' })
   reporter.emit({ event: 'done', outFile: metadataPath })
 
-  if (initialPageNav?.page !== undefined) {
-    console.warn(`resetting back to initial page ${initialPageNav.page}...`)
-    // Reset back to the initial page
-    await goToPage(initialPageNav.page)
+  // Put the reader back where it was, in whichever unit this book uses.
+  const initialNavValue = navUnitValue(initialPageNav)
+  if (initialNavValue !== undefined) {
+    reporter.log(
+      `resetting back to initial ${result.nav.unit} ${initialNavValue}...`
+    )
+    await goToPage(initialNavValue)
   }
 
   await context.close()
