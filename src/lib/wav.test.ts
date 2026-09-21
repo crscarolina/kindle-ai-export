@@ -4,7 +4,14 @@ import path from 'node:path'
 
 import { afterEach, describe, expect, test } from 'vitest'
 
-import { concatWav, encodeWav, joinWavFiles, parseWav } from './wav'
+import {
+  concatWav,
+  encodeWav,
+  joinWavFiles,
+  parseWav,
+  toPcm16,
+  wavDurationSeconds
+} from './wav'
 
 function tone(samples: number, { sampleRate = 24_000, channels = 1 } = {}) {
   const data = Buffer.alloc(samples * 2 * channels)
@@ -245,6 +252,139 @@ describe('joinWavFiles', () => {
   test('refuses an empty list', async () => {
     await expect(joinWavFiles('/tmp/never-written.wav', [])).rejects.toThrow(
       /no audio/i
+    )
+  })
+})
+
+describe('toPcm16', () => {
+  test('rewrites the format tag and bit depth', () => {
+    const converted = parseWav(toPcm16(floatTone(10)))
+    expect(converted.audioFormat).toBe(1)
+    expect(converted.bitsPerSample).toBe(16)
+  })
+
+  test('halves the sample data', () => {
+    const converted = parseWav(toPcm16(floatTone(10)))
+    expect(converted.data.length).toBe(10 * 2)
+  })
+
+  test('keeps the sample rate and channel count', () => {
+    const converted = parseWav(toPcm16(floatTone(10, { sampleRate: 22_050 })))
+    expect(converted.sampleRate).toBe(22_050)
+    expect(converted.channels).toBe(1)
+  })
+
+  test('scales full-scale samples to the 16-bit range', () => {
+    const data = Buffer.alloc(8)
+    data.writeFloatLE(1, 0)
+    data.writeFloatLE(-1, 4)
+    const wav = encodeWav(data, {
+      sampleRate: 24_000,
+      channels: 1,
+      bitsPerSample: 32,
+      audioFormat: 3
+    })
+
+    const out = parseWav(toPcm16(wav)).data
+    expect(out.readInt16LE(0)).toBe(32_767)
+    expect(out.readInt16LE(2)).toBe(-32_767)
+  })
+
+  test('clamps samples beyond full scale rather than wrapping', () => {
+    // Wrapping would turn a loud peak into a loud click.
+    const data = Buffer.alloc(8)
+    data.writeFloatLE(4, 0)
+    data.writeFloatLE(-4, 4)
+    const wav = encodeWav(data, {
+      sampleRate: 24_000,
+      channels: 1,
+      bitsPerSample: 32,
+      audioFormat: 3
+    })
+
+    const out = parseWav(toPcm16(wav)).data
+    expect(out.readInt16LE(0)).toBe(32_767)
+    expect(out.readInt16LE(2)).toBe(-32_767)
+  })
+
+  test('maps silence to zero', () => {
+    const data = Buffer.alloc(4)
+    data.writeFloatLE(0, 0)
+    const wav = encodeWav(data, {
+      sampleRate: 24_000,
+      channels: 1,
+      bitsPerSample: 32,
+      audioFormat: 3
+    })
+    expect(parseWav(toPcm16(wav)).data.readInt16LE(0)).toBe(0)
+  })
+
+  test('leaves an already 16-bit file untouched', () => {
+    const wav = tone(10)
+    expect(toPcm16(wav)).toEqual(wav)
+  })
+
+  test('writes a header consistent with the converted length', () => {
+    const converted = toPcm16(floatTone(32))
+    expect(converted.readUInt32LE(4)).toBe(converted.length - 8)
+    expect(converted.readUInt32LE(40)).toBe(converted.length - 44)
+  })
+})
+
+describe('wavDurationSeconds', () => {
+  test('computes duration from the header', () => {
+    // 24000 samples at 24kHz mono float32 is one second.
+    expect(wavDurationSeconds(floatTone(24_000))).toBeCloseTo(1, 5)
+  })
+
+  test('accounts for the sample rate', () => {
+    expect(
+      wavDurationSeconds(floatTone(12_000, { sampleRate: 12_000 }))
+    ).toBeCloseTo(1, 5)
+  })
+
+  test('accounts for bit depth', () => {
+    expect(wavDurationSeconds(tone(24_000))).toBeCloseTo(1, 5)
+  })
+
+  test('accounts for channel count', () => {
+    // The same bytes carry half as much time when they hold two channels.
+    const data = Buffer.alloc(24_000 * 4)
+    const mono = encodeWav(data, {
+      sampleRate: 24_000,
+      channels: 1,
+      bitsPerSample: 32,
+      audioFormat: 3
+    })
+    const stereo = encodeWav(data, {
+      sampleRate: 24_000,
+      channels: 2,
+      bitsPerSample: 32,
+      audioFormat: 3
+    })
+
+    expect(wavDurationSeconds(mono)).toBeCloseTo(1, 5)
+    expect(wavDurationSeconds(stereo)).toBeCloseTo(0.5, 5)
+  })
+
+  test('reports zero for an empty data chunk', () => {
+    expect(wavDurationSeconds(floatTone(0))).toBe(0)
+  })
+
+  test('a joined file lasts as long as its parts', () => {
+    const a = floatTone(1000)
+    const b = floatTone(2000)
+    expect(wavDurationSeconds(concatWav([a, b]))).toBeCloseTo(
+      wavDurationSeconds(a) + wavDurationSeconds(b),
+      5
+    )
+  })
+
+  test('conversion to 16-bit preserves duration', () => {
+    const wav = floatTone(5000)
+    expect(wavDurationSeconds(toPcm16(wav))).toBeCloseTo(
+      wavDurationSeconds(wav),
+      5
     )
   })
 })

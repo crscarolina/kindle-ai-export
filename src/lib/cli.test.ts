@@ -252,3 +252,137 @@ describe('parseLibraryCliArgs asin filter', () => {
     expect(() => parseLibraryCliArgs(['--asin', 'nope'], env)).toThrow(/asin/i)
   })
 })
+
+describe('parseCliArgs voice', () => {
+  test('defaults to the flagship voice', () => {
+    expect(parseCliArgs(['--asin', asin], {}).voice).toBe('af_heart')
+  })
+
+  test('accepts a voice id', () => {
+    expect(
+      parseCliArgs(['--asin', asin, '--voice', 'bm_george'], {}).voice
+    ).toBe('bm_george')
+  })
+
+  test('accepts a voice by name, case-insensitively', () => {
+    // "--voice George" is what someone reading the picker would type.
+    expect(parseCliArgs(['--asin', asin, '--voice', 'george'], {}).voice).toBe(
+      'bm_george'
+    )
+  })
+
+  test('falls back to the KOKORO_VOICE env var', () => {
+    expect(
+      parseCliArgs(['--asin', asin], { KOKORO_VOICE: 'af_bella' }).voice
+    ).toBe('af_bella')
+  })
+
+  test('prefers the flag over the env var', () => {
+    expect(
+      parseCliArgs(['--asin', asin, '--voice', 'af_bella'], {
+        KOKORO_VOICE: 'am_adam'
+      }).voice
+    ).toBe('af_bella')
+  })
+
+  test('rejects an unknown voice', () => {
+    expect(() =>
+      parseCliArgs(['--asin', asin, '--voice', 'af_nobody'], {})
+    ).toThrow(/af_nobody/)
+  })
+
+  test('names some valid voices when rejecting one', () => {
+    // An error that only says "invalid" leaves you guessing.
+    expect(() =>
+      parseCliArgs(['--asin', asin, '--voice', 'af_nobody'], {})
+    ).toThrow(/af_heart/)
+  })
+})
+
+describe('parseLibraryCliArgs voice filter', () => {
+  const env = { HOME: '/Users/reader' }
+
+  test('has no filter by default', () => {
+    expect(parseLibraryCliArgs([], env).voiceIds).toBeUndefined()
+  })
+
+  test('accepts one voice', () => {
+    expect(parseLibraryCliArgs(['--voice', 'af_heart'], env).voiceIds).toEqual([
+      'af_heart'
+    ])
+  })
+
+  test('accepts a comma-separated list', () => {
+    expect(
+      parseLibraryCliArgs(['--voice', 'af_heart,af_bella'], env).voiceIds
+    ).toEqual(['af_heart', 'af_bella'])
+  })
+
+  test('resolves names as well as ids', () => {
+    expect(
+      parseLibraryCliArgs(['--voice', 'Heart,Bella'], env).voiceIds
+    ).toEqual(['af_heart', 'af_bella'])
+  })
+
+  test('rejects a typo rather than rendering nothing', () => {
+    expect(() => parseLibraryCliArgs(['--voice', 'af_hart'], env)).toThrow(
+      /af_hart/
+    )
+  })
+})
+
+describe('parseCliArgs speed', () => {
+  test('defaults to normal speed', () => {
+    expect(parseCliArgs(['--asin', asin], {}).speed).toBe(1)
+  })
+
+  test('accepts a slower speed', () => {
+    expect(parseCliArgs(['--asin', asin, '--speed', '0.9'], {}).speed).toBe(0.9)
+  })
+
+  test('accepts a faster speed', () => {
+    expect(parseCliArgs(['--asin', asin, '--speed', '1.25'], {}).speed).toBe(
+      1.25
+    )
+  })
+
+  test('falls back to the KOKORO_SPEED env var', () => {
+    expect(parseCliArgs(['--asin', asin], { KOKORO_SPEED: '0.9' }).speed).toBe(
+      0.9
+    )
+  })
+
+  test('rejects a non-numeric speed', () => {
+    expect(() => parseCliArgs(['--asin', asin, '--speed', 'slow'], {})).toThrow(
+      /--speed/
+    )
+  })
+
+  test('rejects zero', () => {
+    expect(() => parseCliArgs(['--asin', asin, '--speed', '0'], {})).toThrow(
+      /--speed/
+    )
+  })
+
+  test('rejects a negative speed', () => {
+    expect(() => parseCliArgs(['--asin', asin, '--speed', '-1'], {})).toThrow(
+      /--speed/
+    )
+  })
+
+  test('rejects a speed outside the usable range', () => {
+    // Far outside 0.5-2.0 the output stops resembling speech.
+    expect(() => parseCliArgs(['--asin', asin, '--speed', '9'], {})).toThrow(
+      /--speed/
+    )
+    expect(() => parseCliArgs(['--asin', asin, '--speed', '0.1'], {})).toThrow(
+      /--speed/
+    )
+  })
+
+  test('names the usable range when rejecting', () => {
+    expect(() => parseCliArgs(['--asin', asin, '--speed', '9'], {})).toThrow(
+      /0\.5/
+    )
+  })
+})

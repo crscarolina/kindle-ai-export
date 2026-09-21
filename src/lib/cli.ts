@@ -2,6 +2,7 @@ import path from 'node:path'
 
 import { parseAsin } from './asin'
 import { sessionDir } from './paths'
+import { DEFAULT_VOICE, findVoice, VOICES } from './voices'
 
 /** Resolved options for listing the reader's Kindle library. */
 export type LibraryCliOptions = {
@@ -15,6 +16,12 @@ export type LibraryCliOptions = {
   limit: number | undefined
   /** Restrict to these books, rather than the whole library. */
   asins: string[] | undefined
+  /** Restrict to these Kokoro voices, rather than all of them. */
+  voiceIds: string[] | undefined
+  /** Narration speed, 1 being the voice's natural pace. */
+  speed: number
+  /** Redo work that has already been completed. */
+  force: boolean
 }
 
 /** Fully resolved options for a pipeline script. */
@@ -34,6 +41,10 @@ export type CliOptions = {
   force: boolean
   /** Process at most this many pages. Useful for previewing a long book. */
   limit: number | undefined
+  /** Kokoro voice id for narration. */
+  voice: string
+  /** Narration speed, 1 being the voice's natural pace. */
+  speed: number
 }
 
 const VALUE_FLAGS = new Set([
@@ -41,7 +52,9 @@ const VALUE_FLAGS = new Set([
   '--work-dir',
   '--user-data-dir',
   '--out-file',
-  '--limit'
+  '--limit',
+  '--voice',
+  '--speed'
 ])
 const BOOLEAN_FLAGS = new Set(['--json', '--force'])
 
@@ -104,7 +117,10 @@ export function parseLibraryCliArgs(
     outFile: value('--out-file'),
     json: flags.get('--json') === true,
     limit: parseLimit(value('--limit')),
-    asins: parseAsinList(value('--asin'))
+    asins: parseAsinList(value('--asin')),
+    voiceIds: parseVoiceList(value('--voice')),
+    speed: parseSpeed(value('--speed') ?? env.KOKORO_SPEED),
+    force: flags.get('--force') === true || env.FORCE === 'true'
   }
 }
 
@@ -131,6 +147,72 @@ function parseAsinList(raw: string | undefined): string[] | undefined {
       }
       return asin
     })
+}
+
+/**
+ * Resolve a voice by id or by name.
+ *
+ * Accepts the name shown in the picker as well as the id, since that is what
+ * someone reading the catalogue is likely to type.
+ */
+function parseVoice(raw: string | undefined): string {
+  if (!raw) {
+    return DEFAULT_VOICE
+  }
+
+  const wanted = raw.trim().toLowerCase()
+  const voice =
+    findVoice(wanted) ??
+    VOICES.find((candidate) => candidate.name.toLowerCase() === wanted)
+
+  if (!voice) {
+    const examples = VOICES.slice(0, 4)
+      .map((candidate) => candidate.id)
+      .join(', ')
+    throw new Error(
+      `Unknown voice: ${raw}. Try one of ${examples}, ... (see src/lib/voices.ts for all ${VOICES.length})`
+    )
+  }
+
+  return voice.id
+}
+
+/**
+ * Parse a comma-separated voice filter.
+ *
+ * Each entry goes through the same resolution as `--voice` for narration, so
+ * names and ids both work and a typo is rejected rather than silently
+ * matching nothing.
+ */
+/** The range over which Kokoro still sounds like speech. */
+const MIN_SPEED = 0.5
+const MAX_SPEED = 2
+
+function parseSpeed(raw: string | undefined): number {
+  if (!raw) {
+    return 1
+  }
+
+  const speed = Number(raw)
+  if (!Number.isFinite(speed) || speed < MIN_SPEED || speed > MAX_SPEED) {
+    throw new Error(
+      `Invalid --speed: ${raw} (expected ${MIN_SPEED} to ${MAX_SPEED}, where 1 is the voice's natural pace)`
+    )
+  }
+
+  return speed
+}
+
+function parseVoiceList(raw: string | undefined): string[] | undefined {
+  if (raw === undefined) {
+    return
+  }
+
+  return raw
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .map((entry) => parseVoice(entry))
 }
 
 function parseLimit(raw: string | undefined): number | undefined {
@@ -186,6 +268,8 @@ export function parseCliArgs(
     outFile: value('--out-file'),
     json: flags.get('--json') === true,
     force: flags.get('--force') === true || env.FORCE === 'true',
-    limit: parseLimit(value('--limit'))
+    limit: parseLimit(value('--limit')),
+    voice: parseVoice(value('--voice') ?? env.KOKORO_VOICE),
+    speed: parseSpeed(value('--speed') ?? env.KOKORO_SPEED)
   }
 }

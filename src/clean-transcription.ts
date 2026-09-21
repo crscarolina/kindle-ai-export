@@ -16,11 +16,18 @@ import {
 } from './lib/cleanup'
 import { parseCliArgs } from './lib/cli'
 import { createReporter } from './lib/events'
+import {
+  describeRemaining,
+  estimateRemainingMs,
+  formatDuration
+} from './lib/progress'
 import { assert, readJsonFile } from './utils'
 
 /** Characters of book text per `claude` invocation. */
 const BATCH_CHARS = 16_000
 const CLAUDE_MODEL = 'sonnet'
+/** Simultaneous `claude` processes. */
+const CONCURRENCY = 3
 /**
  * A batch that hasn't answered in this long is treated as stuck.
  *
@@ -112,18 +119,28 @@ async function main() {
   const chunks = opts.limit ? content.slice(0, opts.limit) : content
   const batches = batchChunks(chunks, BATCH_CHARS)
   let completed = 0
+  let fellBack = 0
+
+  reporter.log(
+    `cleaning ${chunks.length} page${chunks.length === 1 ? '' : 's'} in ${batches.length} batch${batches.length === 1 ? '' : 'es'}, ${CONCURRENCY} at a time`
+  )
+
+  const startedAt = Date.now()
 
   const cleanedBatches = await pMap(
     batches,
     async (batch) => {
+      const batchStartedAt = Date.now()
+
       try {
         const raw = await runClaude(buildCleanupPrompt(batch))
         return applyCleanup(batch, parseCleanupResponse(raw))
       } catch (err: any) {
         // A failed batch keeps its original text rather than failing the book.
+        fellBack++
         reporter.emit({
           event: 'error',
-          message: `cleanup batch failed, keeping original text: ${err.message}`
+          message: `cleanup batch failed, keeping original text (${fellBack} of ${batches.length} so far): ${err.message}`
         })
         return batch
       } finally {
@@ -134,9 +151,35 @@ async function main() {
           page: completed,
           total: batches.length
         })
+
+        // Batches finish out of order under concurrency, so this counts
+        // completions rather than naming which batch it was.
+        const remainingMs = estimateRemainingMs({
+          completed,
+          total: batches.length,
+          elapsedMs: Date.now() - startedAt
+        })
+        // Until every worker has landed once, the measured rate is one
+        // batch's latency rather than the pipeline's throughput, and would
+        // overstate the time left by roughly the concurrency.
+        const eta =
+          completed >= CONCURRENCY ? describeRemaining(remainingMs) : undefined
+
+        reporter.log(
+          `batch ${completed}/${batches.length} in ${formatDuration((Date.now() - batchStartedAt) / 1000)}${eta ? `, ${eta}` : ''}`
+        )
       }
     },
-    { concurrency: 3 }
+    { concurrency: CONCURRENCY }
+  )
+
+  reporter.log(
+    fellBack
+      ? `${fellBack} of ${batches.length} batches kept their original text`
+      : `all ${batches.length} batches cleaned`
+  )
+  reporter.log(
+    `cleanup took ${formatDuration((Date.now() - startedAt) / 1000)}`
   )
 
   const outFile = opts.outFile ?? path.join(opts.bookDir, 'content.clean.json')
