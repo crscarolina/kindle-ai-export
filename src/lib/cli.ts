@@ -1,6 +1,19 @@
 import path from 'node:path'
 
 import { parseAsin } from './asin'
+import { sessionDir } from './paths'
+
+/** Resolved options for listing the reader's Kindle library. */
+export type LibraryCliOptions = {
+  /** Chrome profile directory. Shared across every book.  */
+  userDataDir: string
+  /** Where to write the library listing, if the caller chose a destination. */
+  outFile: string | undefined
+  /** Emit NDJSON progress events instead of prose. */
+  json: boolean
+  /** Return at most this many books. */
+  limit: number | undefined
+}
 
 /** Fully resolved options for a pipeline script. */
 export type CliOptions = {
@@ -63,6 +76,33 @@ function tokenize(argv: string[]): Map<string, string | true> {
   }
 
   return flags
+}
+
+/**
+ * Resolve options for the library listing, which has no book to key paths
+ * off and so defaults to the shared account session.
+ */
+export function parseLibraryCliArgs(
+  argv: string[],
+  env: Record<string, string | undefined>
+): LibraryCliOptions {
+  const flags = tokenize(argv)
+  const value = (name: string): string | undefined => {
+    const flag = flags.get(name)
+    return typeof flag === 'string' ? flag : undefined
+  }
+
+  const explicitProfile = value('--user-data-dir')
+  if (!explicitProfile && !env.HOME) {
+    throw new Error('HOME is unset: pass --user-data-dir explicitly')
+  }
+
+  return {
+    userDataDir: explicitProfile ?? sessionDir(env.HOME!),
+    outFile: value('--out-file'),
+    json: flags.get('--json') === true,
+    limit: parseLimit(value('--limit'))
+  }
 }
 
 function parseLimit(raw: string | undefined): number | undefined {
