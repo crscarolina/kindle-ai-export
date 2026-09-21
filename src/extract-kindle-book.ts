@@ -23,6 +23,7 @@ import type {
 import { createBookIndex } from './lib/book-index'
 import { parseCliArgs } from './lib/cli'
 import { createReporter } from './lib/events'
+import { captureProgress } from './lib/progress'
 import { planExtractionResume, scanCompletedPages } from './lib/resume'
 import { navUnitValue, parsePageNav, parseTocItems } from './playwright-utils'
 import {
@@ -334,6 +335,21 @@ async function main() {
   }
 
   async function updateSettings() {
+    // The sync dialog can surface at any point while the reader settles, so
+    // one failed click is worth a second attempt after clearing it rather
+    // than failing the whole extraction.
+    try {
+      await applyReaderSettings()
+    } catch (err: any) {
+      if (!(await dismissPossibleAlert({ timeout: 500 }))) {
+        throw err
+      }
+      reporter.log('cleared a reader dialog; reapplying reader settings')
+      await applyReaderSettings()
+    }
+  }
+
+  async function applyReaderSettings() {
     console.log('Looking for Reader settings button')
     const settingsButton = page
       .locator(
@@ -400,11 +416,39 @@ async function main() {
     })
   }
 
-  async function dismissPossibleAlert() {
-    const $alertNo = page.locator('ion-alert button', { hasText: 'No' })
-    if (await $alertNo.isVisible()) {
-      await $alertNo.click()
+  /**
+   * Clear any reader dialog standing in front of the page.
+   *
+   * The one that matters is "Most Recent Page Read", offering to jump to
+   * wherever the book was last left. It appears a moment *after* the reader
+   * loads, so checking once on arrival misses it, and its backdrop then
+   * swallows every click aimed at anything behind it -- which surfaces much
+   * later as an unrelated-looking timeout clicking a settings button.
+   *
+   * Always declines: the extractor drives its own position.
+   */
+  async function dismissPossibleAlert({
+    timeout = 2000
+  } = {}): Promise<boolean> {
+    const $alert = page.locator('ion-alert').first()
+
+    try {
+      await $alert.waitFor({ state: 'visible', timeout })
+    } catch {
+      return false
     }
+
+    for (const label of ['No', 'Cancel', 'Dismiss', 'Not Now']) {
+      const $button = $alert.locator('button', { hasText: label }).first()
+      if ((await $button.count()) > 0) {
+        await $button.click({ timeout: 5000 }).catch(() => {})
+        await $alert.waitFor({ state: 'hidden', timeout: 5000 }).catch(() => {})
+        return true
+      }
+    }
+
+    reporter.log('a reader dialog is open and has no button we recognise')
+    return false
   }
 
   async function getLibraryAuthors(): Promise<string[]> {
@@ -684,13 +728,31 @@ async function main() {
       screenshot: screenshotPath
     }
     result.pages.push(pageChunk)
+
+    // Progress is counted in the book's own units, not screenshots. One page
+    // spans several screenshots, so reporting the screenshot counter against a
+    // page total produced nonsense like "741/652".
     reporter.emit({
       event: 'page',
-      index,
       page: navValue,
-      total: opts.limit ?? result.nav.totalNumContentPages
+      ...captureProgress({
+        current: navValue,
+        start: result.nav.startContentPage,
+        total: result.nav.totalNumContentPages,
+        limit: opts.limit
+      })
     })
     await writeResultMetadata()
+
+    // The reader has no next-page chevron on the final page, so trying to
+    // advance costs 30 retries of 5s timeouts -- minutes of looking hung at
+    // the very end of a book that is in fact complete.
+    if (navValue >= result.nav.totalNumContentPages) {
+      reporter.log(
+        `reached the last ${result.nav.unit} (${navValue}); extraction complete`
+      )
+      break
+    }
 
     let retries = 0
 
