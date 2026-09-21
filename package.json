@@ -19,7 +19,8 @@
     "test:format": "prettier --check \"**/*.{js,ts,tsx}\"",
     "test:lint": "eslint .",
     "test:typecheck": "tsc --noEmit",
-    "prepare": "simple-git-hooks"
+    "prepare": "simple-git-hooks",
+    "test:unit": "vitest run"
   },
   "dependencies": {
     "@inquirer/prompts": "^7.0.0",
@@ -56,6 +57,7 @@
     "npm-run-all2": "^8.0.4",
     "prettier": "^3.6.2",
     "simple-git-hooks": "^2.13.1",
+    "tsx": "^4.23.15",
     "typescript": "^5.9.3",
     "vitest": "3.2.4"
   },

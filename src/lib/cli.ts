@@ -1,0 +1,106 @@
+import path from 'node:path'
+
+import { parseAsin } from './asin'
+
+/** Fully resolved options for a pipeline script. */
+export type CliOptions = {
+  asin: string
+  /** Root directory holding every book's working set. */
+  workDir: string
+  /** This book's working set: `<workDir>/<asin>`. */
+  bookDir: string
+  /** Chrome profile directory. Shared across books when the app passes one. */
+  userDataDir: string
+  /** Where to write this step's artifact, if the caller chose a destination. */
+  outFile: string | undefined
+  /** Emit NDJSON progress events instead of prose. */
+  json: boolean
+  /** Redo work that has already been completed. */
+  force: boolean
+}
+
+const VALUE_FLAGS = new Set([
+  '--asin',
+  '--work-dir',
+  '--user-data-dir',
+  '--out-file'
+])
+const BOOLEAN_FLAGS = new Set(['--json', '--force'])
+
+function tokenize(argv: string[]): Map<string, string | true> {
+  const flags = new Map<string, string | true>()
+
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i]!
+    const eq = arg.indexOf('=')
+    const name = eq === -1 ? arg : arg.slice(0, eq)
+
+    if (BOOLEAN_FLAGS.has(name)) {
+      flags.set(name, true)
+      continue
+    }
+
+    if (!VALUE_FLAGS.has(name)) {
+      throw new Error(`Unknown argument: ${arg}`)
+    }
+
+    if (eq !== -1) {
+      flags.set(name, arg.slice(eq + 1))
+      continue
+    }
+
+    // Don't let a value flag swallow the flag that follows it.
+    const next = argv[i + 1]
+    if (next === undefined || next.startsWith('--')) {
+      throw new Error(`Missing value for ${name}`)
+    }
+
+    flags.set(name, next)
+    i++
+  }
+
+  return flags
+}
+
+/**
+ * Resolve options from argv, falling back to environment variables and then to
+ * defaults.
+ *
+ * Defaults are deliberately unchanged from the pre-flag behaviour (`./out`,
+ * a per-book Chrome profile) so running a script from a terminal works exactly
+ * as it always has. The macOS app passes every path explicitly.
+ */
+export function parseCliArgs(
+  argv: string[],
+  env: Record<string, string | undefined>
+): CliOptions {
+  const flags = tokenize(argv)
+
+  const value = (name: string): string | undefined => {
+    const flag = flags.get(name)
+    return typeof flag === 'string' ? flag : undefined
+  }
+
+  const rawAsin = value('--asin') ?? env.ASIN
+  if (!rawAsin) {
+    throw new Error('Missing ASIN: pass --asin <asin-or-url> or set ASIN')
+  }
+
+  const asin = parseAsin(rawAsin)
+  if (!asin) {
+    throw new Error(`Invalid ASIN: ${rawAsin}`)
+  }
+
+  const workDir = value('--work-dir') ?? 'out'
+  const bookDir = path.join(workDir, asin)
+
+  return {
+    asin,
+    workDir,
+    bookDir,
+    userDataDir: value('--user-data-dir') ?? path.join(bookDir, 'data'),
+    outFile: value('--out-file'),
+    json: flags.get('--json') === true,
+    force: flags.get('--force') === true || env.FORCE === 'true'
+  }
+}
