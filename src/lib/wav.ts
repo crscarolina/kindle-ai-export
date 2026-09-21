@@ -1,39 +1,49 @@
-/** A decoded 16-bit PCM WAV file. */
+/** A decoded WAV file. */
 export type Wav = {
   sampleRate: number
   channels: number
-  /** Raw little-endian 16-bit PCM samples. */
+  /** 1 for PCM, 3 for IEEE float. Kokoro emits 3. */
+  audioFormat: number
+  bitsPerSample: number
+  /** Raw little-endian sample bytes, in the format described above. */
   data: Buffer
 }
 
 const HEADER_BYTES = 44
-const BITS_PER_SAMPLE = 16
+
+export type WavFormat = {
+  sampleRate: number
+  channels: number
+  bitsPerSample?: number
+  audioFormat?: number
+}
 
 /**
- * Wrap raw 16-bit PCM samples in a canonical 44-byte WAV header.
+ * Wrap raw samples in a canonical 44-byte WAV header.
  *
- * Kokoro emits PCM, and the project deliberately has no ffmpeg dependency for
- * local narration, so the header is written here rather than shelled out.
+ * The sample format has to be passed in, not assumed: Kokoro returns 32-bit
+ * IEEE float, and writing a 16-bit PCM header over float samples produces a
+ * file that is structurally valid and plays as static.
  */
 export function encodeWav(
   data: Buffer,
-  { sampleRate, channels }: { sampleRate: number; channels: number }
+  { sampleRate, channels, bitsPerSample = 16, audioFormat = 1 }: WavFormat
 ): Buffer {
   const header = Buffer.alloc(HEADER_BYTES)
-  const byteRate = (sampleRate * channels * BITS_PER_SAMPLE) / 8
-  const blockAlign = (channels * BITS_PER_SAMPLE) / 8
+  const blockAlign = (channels * bitsPerSample) / 8
+  const byteRate = sampleRate * blockAlign
 
   header.write('RIFF', 0, 'ascii')
   header.writeUInt32LE(HEADER_BYTES - 8 + data.length, 4)
   header.write('WAVE', 8, 'ascii')
   header.write('fmt ', 12, 'ascii')
-  header.writeUInt32LE(16, 16) // PCM fmt chunk size
-  header.writeUInt16LE(1, 20) // audio format: PCM
+  header.writeUInt32LE(16, 16) // fmt chunk size
+  header.writeUInt16LE(audioFormat, 20)
   header.writeUInt16LE(channels, 22)
   header.writeUInt32LE(sampleRate, 24)
   header.writeUInt32LE(byteRate, 28)
   header.writeUInt16LE(blockAlign, 32)
-  header.writeUInt16LE(BITS_PER_SAMPLE, 34)
+  header.writeUInt16LE(bitsPerSample, 34)
   header.write('data', 36, 'ascii')
   header.writeUInt32LE(data.length, 40)
 
@@ -52,8 +62,7 @@ export function parseWav(buf: Buffer): Wav {
     throw new Error('invalid WAV: missing RIFF/WAVE header')
   }
 
-  let sampleRate: number | undefined
-  let channels: number | undefined
+  let format: Omit<Wav, 'data'> | undefined
   let data: Buffer | undefined
 
   // Chunks are not required to appear in a fixed order or to be adjacent.
@@ -67,8 +76,12 @@ export function parseWav(buf: Buffer): Wav {
     )
 
     if (id === 'fmt ') {
-      channels = body.readUInt16LE(2)
-      sampleRate = body.readUInt32LE(4)
+      format = {
+        audioFormat: body.readUInt16LE(0),
+        channels: body.readUInt16LE(2),
+        sampleRate: body.readUInt32LE(4),
+        bitsPerSample: body.readUInt16LE(14)
+      }
     } else if (id === 'data') {
       data = body
     }
@@ -77,19 +90,20 @@ export function parseWav(buf: Buffer): Wav {
     offset += 8 + size + (size % 2)
   }
 
-  if (sampleRate === undefined || channels === undefined || !data) {
+  if (!format || !data) {
     throw new Error('invalid WAV: missing fmt or data chunk')
   }
 
-  return { sampleRate, channels, data }
+  return { ...format, data }
 }
 
 /**
  * Join WAV parts into one file.
  *
- * Mismatched formats are rejected rather than coerced: concatenating PCM at
- * two different sample rates produces a file that plays the later half at the
- * wrong speed, which nothing would surface until someone listened to it.
+ * Mismatched formats are rejected rather than coerced. Concatenating audio
+ * that disagrees on rate, channels, bit depth or sample encoding produces a
+ * file whose header is entirely self-consistent and whose contents are noise,
+ * so nothing surfaces the mistake until someone listens to the result.
  */
 export function concatWav(parts: Buffer[]): Buffer {
   if (!parts.length) {
@@ -110,10 +124,17 @@ export function concatWav(parts: Buffer[]): Buffer {
         `mismatched channel count: ${part.channels} != ${first.channels}`
       )
     }
+    if (part.audioFormat !== first.audioFormat) {
+      throw new Error(
+        `mismatched sample format: ${part.audioFormat} != ${first.audioFormat}`
+      )
+    }
+    if (part.bitsPerSample !== first.bitsPerSample) {
+      throw new Error(
+        `mismatched bit depth: ${part.bitsPerSample} != ${first.bitsPerSample}`
+      )
+    }
   }
 
-  return encodeWav(Buffer.concat(decoded.map((part) => part.data)), {
-    sampleRate: first.sampleRate,
-    channels: first.channels
-  })
+  return encodeWav(Buffer.concat(decoded.map((part) => part.data)), first)
 }

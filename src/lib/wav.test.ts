@@ -10,6 +10,23 @@ function tone(samples: number, { sampleRate = 24_000, channels = 1 } = {}) {
   return encodeWav(data, { sampleRate, channels })
 }
 
+/** A float32 WAV, which is what Kokoro actually emits. */
+function floatTone(
+  samples: number,
+  { sampleRate = 24_000, channels = 1 } = {}
+) {
+  const data = Buffer.alloc(samples * 4 * channels)
+  for (let i = 0; i < samples * channels; i++) {
+    data.writeFloatLE(Math.sin(i / 10), i * 4)
+  }
+  return encodeWav(data, {
+    sampleRate,
+    channels,
+    bitsPerSample: 32,
+    audioFormat: 3
+  })
+}
+
 describe('encodeWav', () => {
   test('writes a RIFF/WAVE header', () => {
     const wav = tone(10)
@@ -101,5 +118,61 @@ describe('concatWav', () => {
     expect(() =>
       concatWav([tone(10, { channels: 1 }), tone(10, { channels: 2 })])
     ).toThrow(/channel/i)
+  })
+})
+
+describe('float32 audio', () => {
+  test('reads back the IEEE float format tag', () => {
+    // Kokoro emits format 3 / 32-bit, not 16-bit PCM.
+    expect(parseWav(floatTone(10)).audioFormat).toBe(3)
+  })
+
+  test('reads back the bit depth', () => {
+    expect(parseWav(floatTone(10)).bitsPerSample).toBe(32)
+  })
+
+  test('round-trips float samples untouched', () => {
+    const wav = floatTone(8)
+    const parsed = parseWav(wav)
+    expect(parsed.data).toEqual(wav.subarray(44))
+  })
+
+  test('joining float parts preserves the float format', () => {
+    // Relabelling float samples as int16 is what makes a narration sound
+    // like static, and every header field still looks self-consistent.
+    const joined = parseWav(concatWav([floatTone(10), floatTone(10)]))
+    expect(joined.audioFormat).toBe(3)
+    expect(joined.bitsPerSample).toBe(32)
+  })
+
+  test('joining float parts keeps every sample byte', () => {
+    const joined = parseWav(concatWav([floatTone(10), floatTone(15)]))
+    expect(joined.data.length).toBe(25 * 4)
+  })
+
+  test('the joined byte rate matches the format', () => {
+    const joined = concatWav([floatTone(10), floatTone(10)])
+    expect(joined.readUInt32LE(28)).toBe(24_000 * 1 * 4)
+    expect(joined.readUInt16LE(32)).toBe(4)
+  })
+
+  test('refuses to join float and int parts', () => {
+    expect(() => concatWav([floatTone(10), tone(10)])).toThrow(/format/i)
+  })
+
+  test('refuses to join differing bit depths', () => {
+    const wide = encodeWav(Buffer.alloc(8), {
+      sampleRate: 24_000,
+      channels: 1,
+      bitsPerSample: 32,
+      audioFormat: 1
+    })
+    const narrow = encodeWav(Buffer.alloc(8), {
+      sampleRate: 24_000,
+      channels: 1,
+      bitsPerSample: 16,
+      audioFormat: 1
+    })
+    expect(() => concatWav([wide, narrow])).toThrow(/bit depth|bits/i)
   })
 })
