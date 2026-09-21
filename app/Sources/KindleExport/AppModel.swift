@@ -49,11 +49,25 @@ final class AppSettings {
 
   /// Credentials for the child process. Passed as environment, never argv.
   var credentials: [String: String] {
-    ["AMAZON_EMAIL": amazonEmail, "AMAZON_PASSWORD": amazonPassword]
+    var env: [String: String] = [:]
+    if !amazonEmail.isEmpty { env["AMAZON_EMAIL"] = amazonEmail }
+    if !amazonPassword.isEmpty { env["AMAZON_PASSWORD"] = amazonPassword }
+    return env
   }
 
+  /// Re-key the stored password when the email changes.
+  func moveCredential(from old: String, to new: String) {
+    guard old != new, !old.isEmpty else { return }
+    guard let secret = Keychain.get(account: old) else { return }
+
+    try? Keychain.set(secret, account: new)
+    try? Keychain.delete(account: old)
+  }
+
+  var hasNode: Bool { ToolchainConfig.locateNode() != nil }
+
   var isConfigured: Bool {
-    !repoPath.isEmpty
+    !repoPath.isEmpty && hasNode
       && FileManager.default.fileExists(
         atPath: repoPath + "/node_modules/tsx/dist/cli.mjs")
   }
@@ -119,7 +133,7 @@ final class AppModel {
 
   var options = ExportOptions()
 
-  private var pump: Task<Void, Never>?
+  private var isPumping = false
 
   var filteredLibrary: [Book] {
     guard !search.isEmpty else { return library }
@@ -163,14 +177,14 @@ final class AppModel {
       atPath: settings.workDir, withIntermediateDirectories: true)
 
     do {
-      try await runner.runScript(
-        "src/list-library.ts",
-        arguments: [
-          "--user-data-dir", settings.sessionDir, "--out-file", out, "--json",
-        ],
-        credentials: settings.credentials
-      ) { [weak self] event in
-        Task { @MainActor in self?.handle(event, job: nil) }
+      try await consumingEvents(job: nil) { emit in
+        try await runner.runScript(
+          "src/list-library.ts",
+          arguments: [
+            "--user-data-dir", settings.sessionDir, "--out-file", out, "--json",
+          ],
+          credentials: settings.credentials,
+          onEvent: emit)
       }
 
       loadCachedLibrary()
@@ -194,15 +208,17 @@ final class AppModel {
     defer { isBusy = false }
 
     do {
-      try await runner.runScript(
-        "src/sign-in.ts",
-        arguments: ["--user-data-dir", settings.sessionDir, "--json"],
-        credentials: settings.credentials
-      ) { [weak self] event in
-        Task { @MainActor in self?.handle(event, job: nil) }
+      try await consumingEvents(job: nil) { emit in
+        try await runner.runScript(
+          "src/sign-in.ts",
+          arguments: ["--user-data-dir", settings.sessionDir, "--json"],
+          credentials: settings.credentials,
+          onEvent: emit)
       }
       needsSignIn = false
       status = "Signed in."
+      // The queue paused rather than failed, so pick it up again.
+      startPumpIfNeeded()
     } catch {
       status = "Sign-in failed: \(error.localizedDescription)"
     }
@@ -227,22 +243,29 @@ final class AppModel {
   /// Chromium takes an exclusive lock on the shared profile directory, so a
   /// second concurrent extraction would simply fail to launch.
   private func startPumpIfNeeded() {
-    guard pump == nil else { return }
-    pump = Task { [weak self] in
-      while let self, let job = await self.nextQueuedJob() {
+    guard !isPumping, !needsSignIn else { return }
+    isPumping = true
+
+    Task { [weak self] in
+      guard let self else { return }
+
+      while let job = self.nextQueuedJob(), !self.needsSignIn {
         await self.run(job)
-        if await self.needsSignIn { break }
       }
-      await self?.clearPump()
+
+      self.isPumping = false
+
+      // Both statements run without suspending, so a job enqueued while the
+      // previous one was finishing cannot slip between them and be stranded
+      // in the queue with no pump to pick it up.
+      if self.nextQueuedJob() != nil, !self.needsSignIn {
+        self.startPumpIfNeeded()
+      }
     }
   }
 
   private func nextQueuedJob() -> ExportJob? {
     jobs.first { $0.state == .queued }
-  }
-
-  private func clearPump() {
-    pump = nil
   }
 
   private func run(_ job: ExportJob) async {
@@ -258,13 +281,15 @@ final class AppModel {
     for command in commands {
       job.state = .running(step: command.step, completed: 0, total: 0)
       do {
-        try await runner.run(command, credentials: settings.credentials) {
-          [weak self] event in
-          Task { @MainActor in self?.handle(event, job: job) }
+        try await consumingEvents(job: job) { emit in
+          try await runner.run(
+            command, credentials: settings.credentials, onEvent: emit)
         }
       } catch CLIRunnerError.sessionExpired {
         needsSignIn = true
-        job.state = .failed("Amazon session expired")
+        // Back to queued, not failed: the book is retried once the reader
+        // signs in, rather than being quietly dropped from the queue.
+        job.state = .queued
         status = "Queue paused — sign in again from Settings."
         return
       } catch {
@@ -277,14 +302,73 @@ final class AppModel {
   }
 
   /// What already exists on disk for this book.
+  ///
+  /// Counts rather than checks for existence: a half-finished extraction
+  /// leaves a populated `pages/` directory, and treating that as done would
+  /// transcribe a truncated book and report success.
   private func inspect(asin: String) -> BookState {
-    let fm = FileManager.default
     let book = settings.workDir + "/" + asin
-    let pages = (try? fm.contentsOfDirectory(atPath: book + "/pages")) ?? []
+
+    let pages =
+      ((try? FileManager.default.contentsOfDirectory(atPath: book + "/pages"))
+      ?? []).filter { $0.hasSuffix(".png") }.count
+
     return BookState(
-      hasPages: !pages.isEmpty,
-      hasContent: fm.fileExists(atPath: book + "/content.json"),
-      hasCleanedContent: fm.fileExists(atPath: book + "/content.clean.json"))
+      capturedPages: pages,
+      expectedPages: expectedPageCount(bookDir: book),
+      transcribedChunks: chunkCount(at: book + "/content.json"),
+      cleanedChunks: chunkCount(at: book + "/content.clean.json"))
+  }
+
+  /// How many content pages the extractor recorded for this book.
+  private func expectedPageCount(bookDir: String) -> Int? {
+    guard let data = FileManager.default.contents(atPath: bookDir + "/metadata.json"),
+      let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+      let nav = root["nav"] as? [String: Any],
+      let total = nav["totalNumContentPages"] as? Int,
+      total > 0
+    else { return nil }
+
+    return total
+  }
+
+  private func chunkCount(at path: String) -> Int {
+    guard let data = FileManager.default.contents(atPath: path),
+      let chunks = try? JSONSerialization.jsonObject(with: data) as? [Any]
+    else { return 0 }
+
+    return chunks.count
+  }
+
+  /// Deliver events to `handle` in the order the pipeline emitted them.
+  ///
+  /// The runner's callback fires on a background queue. Hopping to the main
+  /// actor with one unstructured Task per event gives no ordering guarantee,
+  /// so log lines interleave and a stale update can land after the job has
+  /// already finished.
+  private func consumingEvents(
+    job: ExportJob?,
+    _ body: (@escaping @Sendable (ExportEvent) -> Void) async throws -> Void
+  ) async throws {
+    let (stream, continuation) = AsyncStream<ExportEvent>.makeStream()
+    let consumer = Task { @MainActor [weak self] in
+      for await event in stream {
+        self?.handle(event, job: job)
+      }
+    }
+
+    defer { continuation.finish() }
+
+    do {
+      try await body { continuation.yield($0) }
+    } catch {
+      continuation.finish()
+      await consumer.value
+      throw error
+    }
+
+    continuation.finish()
+    await consumer.value
   }
 
   // MARK: - Events
@@ -292,11 +376,13 @@ final class AppModel {
   private func handle(_ event: ExportEvent, job: ExportJob?) {
     switch event {
     case .page(let index, _, let total):
-      if let job, case .running(let step, _, _) = job.state {
+      if let job, job.isActive, case .running(let step, _, _) = job.state {
         job.state = .running(step: step, completed: index + 1, total: total)
       }
     case .stepStart(let step):
-      if let job { job.state = .running(step: step, completed: 0, total: 0) }
+      if let job, job.isActive {
+        job.state = .running(step: step, completed: 0, total: 0)
+      }
       append("→ \(step.rawValue)")
     case .stepDone(let step):
       append("✓ \(step.rawValue)")
@@ -317,5 +403,18 @@ final class AppModel {
   private func append(_ line: String) {
     log.append(line)
     if log.count > 2000 { log.removeFirst(log.count - 2000) }
+  }
+}
+
+extension ExportJob {
+  /// Whether progress events should still move this job's state.
+  ///
+  /// Events arrive asynchronously, so a late one can land after the job has
+  /// already finished or failed.
+  var isActive: Bool {
+    switch state {
+    case .queued, .running: true
+    case .finished, .failed, .cancelled: false
+    }
   }
 }

@@ -1,6 +1,10 @@
-import { describe, expect, test } from 'vitest'
+import fs from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
 
-import { concatWav, encodeWav, parseWav } from './wav'
+import { afterEach, describe, expect, test } from 'vitest'
+
+import { concatWav, encodeWav, joinWavFiles, parseWav } from './wav'
 
 function tone(samples: number, { sampleRate = 24_000, channels = 1 } = {}) {
   const data = Buffer.alloc(samples * 2 * channels)
@@ -174,5 +178,73 @@ describe('float32 audio', () => {
       audioFormat: 1
     })
     expect(() => concatWav([wide, narrow])).toThrow(/bit depth|bits/i)
+  })
+})
+
+describe('joinWavFiles', () => {
+  const dirs: string[] = []
+
+  async function write(parts: Buffer[]): Promise<string[]> {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'kindle-wav-'))
+    dirs.push(dir)
+    return Promise.all(
+      parts.map(async (part, i) => {
+        const file = path.join(dir, `${i}.wav`)
+        await fs.writeFile(file, part)
+        return file
+      })
+    )
+  }
+
+  afterEach(async () => {
+    await Promise.all(
+      dirs.splice(0).map((dir) => fs.rm(dir, { recursive: true }))
+    )
+  })
+
+  test('matches an in-memory join byte for byte', async () => {
+    const parts = [floatTone(10), floatTone(15), floatTone(5)]
+    const files = await write(parts)
+    const out = path.join(path.dirname(files[0]!), 'joined.wav')
+
+    await joinWavFiles(out, files)
+
+    expect(await fs.readFile(out)).toEqual(concatWav(parts))
+  })
+
+  test('writes a header consistent with the streamed length', async () => {
+    const files = await write([floatTone(10), floatTone(15)])
+    const out = path.join(path.dirname(files[0]!), 'joined.wav')
+
+    await joinWavFiles(out, files)
+    const joined = await fs.readFile(out)
+
+    expect(joined.readUInt32LE(4)).toBe(joined.length - 8)
+    expect(joined.readUInt32LE(40)).toBe(joined.length - 44)
+  })
+
+  test('preserves the source sample format', async () => {
+    const files = await write([floatTone(10), floatTone(10)])
+    const out = path.join(path.dirname(files[0]!), 'joined.wav')
+
+    await joinWavFiles(out, files)
+    const parsed = parseWav(await fs.readFile(out))
+
+    expect(parsed.audioFormat).toBe(3)
+    expect(parsed.bitsPerSample).toBe(32)
+    expect(parsed.sampleRate).toBe(24_000)
+  })
+
+  test('refuses mismatched formats rather than writing noise', async () => {
+    const files = await write([floatTone(10), tone(10)])
+    const out = path.join(path.dirname(files[0]!), 'joined.wav')
+
+    await expect(joinWavFiles(out, files)).rejects.toThrow(/format/i)
+  })
+
+  test('refuses an empty list', async () => {
+    await expect(joinWavFiles('/tmp/never-written.wav', [])).rejects.toThrow(
+      /no audio/i
+    )
   })
 })

@@ -25,19 +25,44 @@ public struct ExportOptions: Equatable, Sendable {
 }
 
 /// What already exists in a book's working set.
+///
+/// Each flag means *complete*, not *present*. A directory with 50 of 400
+/// screenshots in it is an interrupted extraction, and treating it as done
+/// would transcribe a truncated book and report success.
 public struct BookState: Equatable, Sendable {
-  public var hasPages: Bool
-  public var hasContent: Bool
-  public var hasCleanedContent: Bool
+  public var capturedPages: Int
+  public var expectedPages: Int?
+  /// Chunks in content.json, and the page count they were produced from.
+  public var transcribedChunks: Int
+  public var cleanedChunks: Int
 
   public init(
-    hasPages: Bool = false,
-    hasContent: Bool = false,
-    hasCleanedContent: Bool = false
+    capturedPages: Int = 0,
+    expectedPages: Int? = nil,
+    transcribedChunks: Int = 0,
+    cleanedChunks: Int = 0
   ) {
-    self.hasPages = hasPages
-    self.hasContent = hasContent
-    self.hasCleanedContent = hasCleanedContent
+    self.capturedPages = capturedPages
+    self.expectedPages = expectedPages
+    self.transcribedChunks = transcribedChunks
+    self.cleanedChunks = cleanedChunks
+  }
+
+  /// Extraction is only complete when metadata says how many pages to expect
+  /// and that many are on disk. Without metadata we cannot know, so we re-run.
+  public var hasPages: Bool {
+    guard let expectedPages, expectedPages > 0 else { return false }
+    return capturedPages >= expectedPages
+  }
+
+  /// Completeness cascades: content produced from a partial capture is
+  /// itself partial, however many chunks it happens to contain.
+  public var hasContent: Bool {
+    hasPages && transcribedChunks > 0 && transcribedChunks >= capturedPages
+  }
+
+  public var hasCleanedContent: Bool {
+    hasContent && cleanedChunks > 0 && cleanedChunks >= transcribedChunks
   }
 }
 
@@ -66,13 +91,19 @@ public enum ExportPlan {
           outFile: outFile, limit: options.limit, force: options.force))
     }
 
-    if options.force || !state.hasPages {
+    // A preview run leaves a deliberately partial working set behind, so it
+    // can never satisfy a later full export. Without this, previewing a book
+    // and then exporting it properly would silently produce a 50-page result.
+    let isPreview = options.limit != nil
+    let skipCompleted = !options.force && !isPreview
+
+    if !skipCompleted || !state.hasPages {
       add(.extractBook)
     }
-    if options.force || !state.hasContent {
+    if !skipCompleted || !state.hasContent {
       add(.transcribe)
     }
-    if options.clean, options.force || !state.hasCleanedContent {
+    if options.clean, !skipCompleted || !state.hasCleanedContent {
       add(.clean)
     }
 

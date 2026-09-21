@@ -187,38 +187,80 @@ func steps(
   ).map(\.step)
 }
 
+let extracted = BookState(capturedPages: 400, expectedPages: 400)
+let transcribed = BookState(
+  capturedPages: 400, expectedPages: 400, transcribedChunks: 400)
+let finished = BookState(
+  capturedPages: 400, expectedPages: 400, transcribedChunks: 400,
+  cleanedChunks: 400)
+
 t.expectEqual(
   steps(ExportOptions()),
   [.extractBook, .transcribe, .clean, .markdown],
   "a fresh book runs the whole pipeline")
 
 t.expectEqual(
-  steps(ExportOptions(), BookState(hasPages: true)),
+  steps(ExportOptions(), extracted),
   [.transcribe, .clean, .markdown],
-  "skips extraction when pages already exist")
+  "skips extraction when every page is captured")
 
 t.expectEqual(
-  steps(ExportOptions(), BookState(hasPages: true, hasContent: true)),
+  steps(ExportOptions(), transcribed),
   [.clean, .markdown],
-  "skips transcription when content already exists")
+  "skips transcription when every page is transcribed")
+
+t.expectEqual(
+  steps(ExportOptions(), finished), [.markdown],
+  "re-exporting a finished book only rebuilds the artifact")
+
+t.expectEqual(
+  steps(ExportOptions(force: true), finished),
+  [.extractBook, .transcribe, .clean, .markdown],
+  "force redoes every step")
+
+// An interrupted extraction must not pass for a finished one: transcribing
+// it would produce a truncated book and report success.
+t.expectEqual(
+  steps(ExportOptions(), BookState(capturedPages: 50, expectedPages: 400)),
+  [.extractBook, .transcribe, .clean, .markdown],
+  "a part-captured book re-runs extraction")
+
+t.expectEqual(
+  steps(ExportOptions(), BookState(capturedPages: 50, expectedPages: nil)),
+  [.extractBook, .transcribe, .clean, .markdown],
+  "pages with no metadata to check against re-run extraction")
 
 t.expectEqual(
   steps(
     ExportOptions(),
-    BookState(hasPages: true, hasContent: true, hasCleanedContent: true)),
-  [.markdown],
-  "re-exporting a finished book only rebuilds the artifact")
+    BookState(capturedPages: 400, expectedPages: 400, transcribedChunks: 50)),
+  [.transcribe, .clean, .markdown],
+  "a part-transcribed book re-runs transcription")
 
 t.expectEqual(
   steps(
-    ExportOptions(force: true),
-    BookState(hasPages: true, hasContent: true, hasCleanedContent: true)),
+    ExportOptions(),
+    BookState(
+      capturedPages: 400, expectedPages: 400, transcribedChunks: 400,
+      cleanedChunks: 50)),
+  [.clean, .markdown],
+  "a part-cleaned book re-runs cleanup")
+
+// A preview deliberately leaves a partial working set, so it can neither be
+// satisfied by earlier work nor satisfy a later full export.
+t.expectEqual(
+  steps(ExportOptions(limit: 50), finished),
   [.extractBook, .transcribe, .clean, .markdown],
-  "force redoes every step")
+  "a preview always re-runs rather than reusing a full working set")
 
 t.expectEqual(
-  steps(ExportOptions(clean: false), BookState(hasPages: true, hasContent: true)),
-  [.markdown],
+  steps(ExportOptions(), BookState(capturedPages: 50, expectedPages: 400,
+    transcribedChunks: 50, cleanedChunks: 50)),
+  [.extractBook, .transcribe, .clean, .markdown],
+  "a full export after a preview rebuilds the whole book")
+
+t.expectEqual(
+  steps(ExportOptions(clean: false), transcribed), [.markdown],
   "omits the cleanup pass when it is switched off")
 
 t.expectEqual(

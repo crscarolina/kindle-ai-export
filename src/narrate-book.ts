@@ -10,7 +10,7 @@ import { parseCliArgs } from './lib/cli'
 import { resolveContentPath } from './lib/content'
 import { createReporter } from './lib/events'
 import { splitForNarration } from './lib/narration'
-import { concatWav } from './lib/wav'
+import { joinWavFiles } from './lib/wav'
 import { assert, fileExists, hashObject, readJsonFile } from './utils'
 
 const MODEL_ID = 'onnx-community/Kokoro-82M-v1.0-ONNX'
@@ -57,7 +57,7 @@ async function main() {
     device: 'cpu'
   })
 
-  const parts: Buffer[] = []
+  const piecePaths: string[] = []
 
   for (const [index, piece] of pieces.entries()) {
     const piecePath = path.join(cacheDir, `${index}`.padStart(6, '0') + '.wav')
@@ -67,7 +67,7 @@ async function main() {
       await fs.writeFile(piecePath, Buffer.from(audio.toWav()))
     }
 
-    parts.push(await fs.readFile(piecePath))
+    piecePaths.push(piecePath)
     reporter.emit({
       event: 'page',
       index,
@@ -78,7 +78,7 @@ async function main() {
 
   const outFile = opts.outFile ?? path.join(opts.bookDir, 'audiobook.wav')
   await fs.mkdir(path.dirname(outFile), { recursive: true })
-  await fs.writeFile(outFile, concatWav(parts))
+  await joinWavFiles(outFile, piecePaths)
 
   reporter.emit({ event: 'step-done', step: 'audio' })
   reporter.emit({ event: 'done', outFile })

@@ -13,7 +13,13 @@ struct SettingsView: View {
           Button("Choose…") { chooseRepo() }
         }
 
-        if !model.settings.repoPath.isEmpty, !model.settings.isConfigured {
+        if !model.settings.hasNode {
+          Label(
+            "No node found on PATH. Install Node 20 or later.",
+            systemImage: "exclamationmark.triangle")
+            .font(.caption)
+            .foregroundStyle(.orange)
+        } else if !model.settings.repoPath.isEmpty, !model.settings.isConfigured {
           Label(
             "No tsx found there. Run `pnpm install` in the repo.",
             systemImage: "exclamationmark.triangle")
@@ -24,8 +30,15 @@ struct SettingsView: View {
 
       Section("Amazon") {
         TextField("Email", text: $model.settings.amazonEmail)
+          .onChange(of: model.settings.amazonEmail) { old, new in
+            // The Keychain entry is keyed on the email, so carry it across
+            // rather than orphaning it when the address is corrected.
+            model.settings.moveCredential(from: old, to: new)
+          }
         SecureField("Password", text: $password)
-          .onSubmit { model.settings.amazonPassword = password }
+          .onChange(of: password) { _, value in
+            model.settings.amazonPassword = value
+          }
         Text("Stored in your Keychain, and passed to the exporter as an environment variable.")
           .font(.caption)
           .foregroundStyle(.secondary)

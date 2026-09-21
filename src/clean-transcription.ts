@@ -21,6 +21,14 @@ import { assert, readJsonFile } from './utils'
 /** Characters of book text per `claude` invocation. */
 const BATCH_CHARS = 16_000
 const CLAUDE_MODEL = 'sonnet'
+/**
+ * A batch that hasn't answered in this long is treated as stuck.
+ *
+ * Without it, a `claude` that blocks -- not logged in, or waiting on a
+ * prompt -- leaves the promise unsettled and the whole export hangs with no
+ * progress and no way to cancel.
+ */
+const BATCH_TIMEOUT_MS = 5 * 60 * 1000
 
 /**
  * Run one batch through the `claude` CLI.
@@ -47,16 +55,42 @@ async function runClaude(prompt: string): Promise<string> {
 
     let stdout = ''
     let stderr = ''
+    let settled = false
+
+    const finish = (fn: () => void) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      fn()
+    }
+
+    const timer = setTimeout(() => {
+      child.kill('SIGKILL')
+      finish(() =>
+        reject(new Error(`claude timed out after ${BATCH_TIMEOUT_MS}ms`))
+      )
+    }, BATCH_TIMEOUT_MS)
+
     child.stdout.on('data', (data) => (stdout += data))
     child.stderr.on('data', (data) => (stderr += data))
 
-    child.on('error', reject)
+    child.on('error', (err) => finish(() => reject(err)))
+
+    // Writing to a child that failed to spawn raises here rather than on the
+    // child itself, and an unhandled stream error would take down the run
+    // instead of falling back to the original text.
+    child.stdin.on('error', (err) => finish(() => reject(err)))
+
     child.on('close', (code) => {
-      if (code === 0) {
-        resolve(stdout)
-      } else {
-        reject(new Error(`claude exited with ${code}: ${stderr.slice(0, 500)}`))
-      }
+      finish(() => {
+        if (code === 0) {
+          resolve(stdout)
+        } else {
+          reject(
+            new Error(`claude exited with ${code}: ${stderr.slice(0, 500)}`)
+          )
+        }
+      })
     })
 
     child.stdin.write(prompt)

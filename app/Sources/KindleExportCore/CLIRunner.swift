@@ -5,9 +5,36 @@ public struct ToolchainConfig: Sendable {
   public let repoRoot: URL
   public let nodeExecutable: URL
 
-  public init(repoRoot: URL, nodeExecutable: URL = URL(fileURLWithPath: "/usr/local/bin/node")) {
+  public init(repoRoot: URL, nodeExecutable: URL? = nil) {
     self.repoRoot = repoRoot
-    self.nodeExecutable = nodeExecutable
+    self.nodeExecutable =
+      nodeExecutable ?? Self.locateNode() ?? URL(fileURLWithPath: "/usr/bin/env")
+  }
+
+  /// Common install prefixes, in the order a shell would find them.
+  ///
+  /// Hardcoding one prefix breaks on most current Macs: Apple-silicon
+  /// Homebrew uses /opt/homebrew, and nvm, fnm and Volta each use their own.
+  static let nodeSearchPaths = [
+    "/opt/homebrew/bin/node",
+    "/usr/local/bin/node",
+    "/usr/bin/node",
+  ]
+
+  public static func locateNode() -> URL? {
+    let fm = FileManager.default
+
+    if let path = ProcessInfo.processInfo.environment["PATH"] {
+      for prefix in path.split(separator: ":") {
+        let candidate = String(prefix) + "/node"
+        if fm.isExecutableFile(atPath: candidate) {
+          return URL(fileURLWithPath: candidate)
+        }
+      }
+    }
+
+    return nodeSearchPaths.first(where: fm.isExecutableFile(atPath:))
+      .map { URL(fileURLWithPath: $0) }
   }
 
   /// tsx's own JS entry point.
@@ -102,16 +129,39 @@ public final class CLIRunner: @unchecked Sendable {
       }
     }
 
-    try process.run()
+    // Arm the handler before starting the child. A script that fails fast --
+    // a bad tsx path, a syntax error, a missing credential -- can exit before
+    // a handler installed afterwards is ever called, leaving the job hung in
+    // .running and the serial queue wedged for the rest of the session.
+    let exited = Exited()
+    process.terminationHandler = { _ in exited.signal() }
 
-    await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-      process.terminationHandler = { _ in continuation.resume() }
-    }
+    try process.run()
+    await exited.wait()
 
     stdout.fileHandleForReading.readabilityHandler = nil
     stderr.fileHandleForReading.readabilityHandler = nil
 
-    // Drain anything the handlers left buffered without a trailing newline.
+    // Drain whatever is still sitting in the pipes. The scripts emit
+    // step-done and done immediately before exiting, so the terminal events
+    // are exactly the ones a premature close would discard.
+    let remainingOut = stdout.fileHandleForReading.readDataToEndOfFile()
+    if !remainingOut.isEmpty {
+      for line in state.appendStdout(remainingOut) {
+        if let event = ExportEvent.decode(line: line) {
+          if case .sessionExpired = event { state.markSessionExpired() }
+          onEvent(event)
+        }
+      }
+    }
+
+    let remainingErr = stderr.fileHandleForReading.readDataToEndOfFile()
+    if !remainingErr.isEmpty {
+      for line in state.appendStderr(remainingErr) where !line.isEmpty {
+        onEvent(.log(line))
+      }
+    }
+
     for line in state.flush() {
       if let event = ExportEvent.decode(line: line) {
         if case .sessionExpired = event { state.markSessionExpired() }
@@ -166,4 +216,34 @@ private final class RunState: @unchecked Sendable {
 
   var sessionExpired: Bool { lock.withLock { expired } }
   var stderrText: String { lock.withLock { collectedStderr.joined(separator: "\n") } }
+}
+
+/// One-shot termination signal.
+///
+/// Tolerates the child exiting before the caller starts waiting, which a
+/// bare continuation does not.
+private final class Exited: @unchecked Sendable {
+  private let lock = NSLock()
+  private var hasExited = false
+  private var continuation: CheckedContinuation<Void, Never>?
+
+  func signal() {
+    let pending: CheckedContinuation<Void, Never>? = lock.withLock {
+      hasExited = true
+      defer { continuation = nil }
+      return continuation
+    }
+    pending?.resume()
+  }
+
+  func wait() async {
+    await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+      let alreadyExited: Bool = lock.withLock {
+        if hasExited { return true }
+        self.continuation = continuation
+        return false
+      }
+      if alreadyExited { continuation.resume() }
+    }
+  }
 }

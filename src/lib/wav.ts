@@ -1,3 +1,5 @@
+import fs from 'node:fs/promises'
+
 /** A decoded WAV file. */
 export type Wav = {
   sampleRate: number
@@ -137,4 +139,57 @@ export function concatWav(parts: Buffer[]): Buffer {
   }
 
   return encodeWav(Buffer.concat(decoded.map((part) => part.data)), first)
+}
+
+/**
+ * Join WAV files on disk, streaming rather than buffering.
+ *
+ * A full novel is hours of audio -- gigabytes of samples -- so building the
+ * result with `concatWav` would hold it twice in memory and fail at the very
+ * last step, after all the synthesis work is already done. Here the header is
+ * written as a placeholder, each part is appended in turn, and the size
+ * fields are patched once the total is known.
+ */
+export async function joinWavFiles(
+  outFile: string,
+  piecePaths: string[]
+): Promise<void> {
+  if (!piecePaths.length) {
+    throw new Error('no audio to join')
+  }
+
+  const out = await fs.open(outFile, 'w')
+
+  try {
+    await out.write(Buffer.alloc(HEADER_BYTES))
+
+    let format: Omit<Wav, 'data'> | undefined
+    let total = 0
+
+    for (const piecePath of piecePaths) {
+      const piece = parseWav(await fs.readFile(piecePath))
+
+      if (!format) {
+        format = piece
+      } else if (
+        piece.sampleRate !== format.sampleRate ||
+        piece.channels !== format.channels ||
+        piece.audioFormat !== format.audioFormat ||
+        piece.bitsPerSample !== format.bitsPerSample
+      ) {
+        throw new Error(`mismatched sample format in ${piecePath}`)
+      }
+
+      await out.write(piece.data)
+      total += piece.data.length
+    }
+
+    // Rewrite the header now that the total length is known.
+    const header = encodeWav(Buffer.alloc(0), format!).subarray(0, HEADER_BYTES)
+    header.writeUInt32LE(HEADER_BYTES - 8 + total, 4)
+    header.writeUInt32LE(total, 40)
+    await out.write(header, 0, HEADER_BYTES, 0)
+  } finally {
+    await out.close()
+  }
 }
