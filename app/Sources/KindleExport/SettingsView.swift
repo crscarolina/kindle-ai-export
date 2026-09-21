@@ -7,9 +7,16 @@ struct SettingsView: View {
 
   var body: some View {
     Form {
-      Section("Repository") {
+      Section("Pipeline") {
+        if model.settings.usingBundledRepo {
+          Label("Using the copy bundled in the app", systemImage: "shippingbox")
+            .font(.callout)
+        }
+
         HStack {
-          TextField("Path to kindle-ai-export", text: $model.settings.repoPath)
+          TextField(
+            "Override with a checkout (optional)",
+            text: $model.settings.repoPathOverride)
           Button("Choose…") { chooseRepo() }
         }
 
@@ -65,7 +72,7 @@ struct SettingsView: View {
     panel.canChooseDirectories = true
     panel.canChooseFiles = false
     if panel.runModal() == .OK, let url = panel.url {
-      model.settings.repoPath = url.path(percentEncoded: false)
+      model.settings.repoPathOverride = url.path(percentEncoded: false)
     }
   }
 }

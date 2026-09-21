@@ -311,7 +311,9 @@ if let repo = ProcessInfo.processInfo.environment["KINDLE_EXPORT_INTEGRATION"] {
     try await runner.run(
       ExportCommand(
         step: .markdown, asin: asin,
-        workDir: repo + "/out", userDataDir: repo + "/out/\(asin)/data",
+        workDir: ProcessInfo.processInfo.environment["KINDLE_EXPORT_WORKDIR"]
+          ?? (repo + "/out"),
+        userDataDir: repo + "/out/\(asin)/data",
         outFile: outFile)
     ) { collected.add($0) }
 

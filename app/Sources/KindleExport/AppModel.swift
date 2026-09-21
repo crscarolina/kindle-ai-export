@@ -9,8 +9,10 @@ typealias Book = KindleExportCore.LibraryItem
 @Observable
 @MainActor
 final class AppSettings {
-  var repoPath: String {
-    didSet { defaults.set(repoPath, forKey: "repoPath") }
+  /// An explicit checkout chosen in Settings. Empty means use the bundled
+  /// pipeline, which is the normal case.
+  var repoPathOverride: String {
+    didSet { defaults.set(repoPathOverride, forKey: "repoPath") }
   }
   var amazonEmail: String {
     didSet { defaults.set(amazonEmail, forKey: "amazonEmail") }
@@ -23,7 +25,7 @@ final class AppSettings {
 
   init() {
     let defaults = UserDefaults.standard
-    repoPath = defaults.string(forKey: "repoPath") ?? ""
+    repoPathOverride = defaults.string(forKey: "repoPath") ?? ""
     amazonEmail = defaults.string(forKey: "amazonEmail") ?? ""
     destination =
       defaults.string(forKey: "destination")
@@ -34,6 +36,30 @@ final class AppSettings {
   var amazonPassword: String {
     get { Keychain.get(account: amazonEmail) ?? "" }
     set { try? Keychain.set(newValue, account: amazonEmail) }
+  }
+
+  /// The Node pipeline shipped inside the app.
+  ///
+  /// A release build copies the checkout here; a debug build symlinks it to
+  /// the working tree, so development edits take effect without rebuilding
+  /// the bundle.
+  static let bundledRepoPath: String? = {
+    guard let resources = Bundle.main.resourceURL else { return nil }
+    let repo = resources.appending(path: "repo")
+    let tsx = repo.appending(path: "node_modules/tsx/dist/cli.mjs")
+    return FileManager.default.fileExists(atPath: tsx.path(percentEncoded: false))
+      ? repo.path(percentEncoded: false)
+      : nil
+  }()
+
+  /// Where the pipeline actually lives: an explicit override if one is set,
+  /// otherwise the copy inside the bundle.
+  var repoPath: String {
+    repoPathOverride.isEmpty ? (Self.bundledRepoPath ?? "") : repoPathOverride
+  }
+
+  var usingBundledRepo: Bool {
+    repoPathOverride.isEmpty && Self.bundledRepoPath != nil
   }
 
   var home: String { NSHomeDirectory() }

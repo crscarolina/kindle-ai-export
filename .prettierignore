@@ -1,0 +1,9 @@
+node_modules
+out
+dist
+examples
+pnpm-lock.yaml
+
+# Bundled copy of this repo inside the built app.
+app/build
+app/.build

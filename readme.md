@@ -152,8 +152,20 @@ A SwiftUI front end lives in [`app/`](./app). It picks a book from your Kindle
 library, runs the whole pipeline, and writes the artifacts wherever you choose.
 
 ```sh
-cd app && ./build-app.sh && open build/KindleExport.app
+cd app
+./build-app.sh debug    # pipeline symlinked to this checkout, for development
+./build-app.sh release  # pipeline copied in, so the app stands alone
+open build/KindleExport.app
 ```
+
+The Node pipeline ships inside the bundle at `Contents/Resources/repo`. A
+**debug** build symlinks it to your working checkout, so edits to `src/` take
+effect without rebuilding the app. A **release** build copies it in, which
+makes the app self-contained at the cost of size -- `onnxruntime-node` and the
+Hugging Face runtime that Kokoro needs account for most of it.
+
+You can still point the app at a different checkout from Settings; that
+override wins over the bundled copy.
 
 - **Xcode is not required.** The app builds with the Command Line Tools via
   SwiftPM, and `build-app.sh` assembles the `.app` bundle by hand.
