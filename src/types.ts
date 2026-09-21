@@ -110,6 +110,19 @@ export interface AmazonBookInfo {
   srl: number
 }
 
+/** `metadata.json` from Amazon's renderer TAR files */
+export interface AmazonRenderMetadata {
+  bookTitle: string
+  lang: string
+  firstPositionId: number
+  lastPositionId: number
+  srl: number
+  coverPosistion: number // (sic)
+  writingMode: string
+  direction: string
+  progressionDirection: string
+}
+
 export interface AmazonRenderLocationMap {
   locations: number[]
   navigationUnit: Array<{
