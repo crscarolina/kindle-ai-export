@@ -5,6 +5,7 @@ import path from 'node:path'
 
 import type { BookMetadata, ContentChunk } from './types'
 import { parseCliArgs } from './lib/cli'
+import { resolveContentPath } from './lib/content'
 import { createReporter } from './lib/events'
 import { renderBookMarkdown } from './lib/markdown'
 import { assert, readJsonFile } from './utils'
@@ -16,7 +17,7 @@ async function main() {
   reporter.emit({ event: 'step-start', step: 'markdown' })
 
   const content = await readJsonFile<ContentChunk[]>(
-    path.join(opts.bookDir, 'content.json')
+    await resolveContentPath(opts.bookDir)
   )
   const metadata = await readJsonFile<BookMetadata>(
     path.join(opts.bookDir, 'metadata.json')

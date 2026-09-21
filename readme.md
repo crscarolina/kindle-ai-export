@@ -12,6 +12,7 @@
   - [How does it work?](#how-does-it-work)
   - [Audiobook Examples 🔥](#audiobook-examples-)
   - [Why is this necessary?](#why-is-this-necessary)
+- [macOS App](#macos-app)
 - [Usage](#usage)
   - [Setup Env Vars](#setup-env-vars)
   - [Extract Kindle Book](#extract-kindle-book)
@@ -145,6 +146,42 @@ _Why?_ Because I love reading books on Kindle (especially scifi books!!), but no
 
 I also created an [OSS TypeScript client for the unofficial Kindle API](https://github.com/transitive-bullshit/kindle-api), but I ended up only using some of the types and utils since Playwright + vLLMs allowed me to completely bypass their API and DRM. This approach should also be a lot less error-prone than using their unofficial API.
 
+## macOS App
+
+A SwiftUI front end lives in [`app/`](./app). It picks a book from your Kindle
+library, runs the whole pipeline, and writes the artifacts wherever you choose.
+
+```sh
+cd app
+./build-app.sh debug    # pipeline symlinked to this checkout, for development
+./build-app.sh release  # pipeline copied in, so the app stands alone
+open build/KindleExport.app
+```
+
+The Node pipeline ships inside the bundle at `Contents/Resources/repo`. A
+**debug** build symlinks it to your working checkout, so edits to `src/` take
+effect without rebuilding the app. A **release** build copies it in, which
+makes the app self-contained at the cost of size -- `onnxruntime-node` and the
+Hugging Face runtime that Kokoro needs account for most of it.
+
+You can still point the app at a different checkout from Settings; that
+override wins over the bundled copy.
+
+- **Xcode is not required.** The app builds with the Command Line Tools via
+  SwiftPM, and `build-app.sh` assembles the `.app` bundle by hand.
+- **Requires** Google Chrome (the extractor drives your installed Chrome) and
+  the [`claude` CLI](https://claude.com/claude-code) for the cleanup pass.
+- **Sign in once**, from Settings. Chrome opens visibly so you can complete
+  2FA by hand; every export afterwards reuses that session unattended.
+- The browser profile is shared across books at
+  `~/Library/Application Support/kindle-ai-export/session`, so you don't
+  re-authenticate per title.
+- Exports run **one at a time**: Chromium takes an exclusive lock on the
+  shared profile, so a second concurrent extraction cannot launch.
+
+Run its tests with `swift run KindleExportCoreTests` (XCTest and Swift Testing
+both ship with Xcode, so `swift test` is unavailable with the CLT alone).
+
 ## Usage
 
 Make sure you have `node >= 18` and [pnpm](https://pnpm.io) installed.
@@ -170,6 +207,18 @@ ASIN=
 
 OPENAI_API_KEY=
 ```
+
+Every script also takes flags, which win over the environment:
+
+| Flag | Meaning |
+| --- | --- |
+| `--asin <asin-or-url>` | The book. Accepts a bare ASIN or a `read.amazon.com` URL. |
+| `--work-dir <dir>` | Root for working sets. Defaults to `./out`. |
+| `--user-data-dir <dir>` | Chrome profile. Defaults to `<work-dir>/<asin>/data`. |
+| `--out-file <path>` | Where to write this step's artifact. |
+| `--limit <n>` | Process at most `n` pages, for previewing a book. |
+| `--json` | Emit NDJSON progress events instead of prose. |
+| `--force` | Redo work that is already complete. |
 
 You can find your book's [ASIN](https://en.wikipedia.org/wiki/Amazon_Standard_Identification_Number) (Amazon ID) by visiting [read.amazon.com](https://read.amazon.com) and clicking on the book you want to export. The resulting URL will look like `https://read.amazon.com/?asin=B0819W19WD&ref_=kwl_kr_iv_rec_2`, with `B0819W19WD` being the ASIN in this case.
 

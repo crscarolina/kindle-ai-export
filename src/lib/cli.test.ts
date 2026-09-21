@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest'
 
-import { parseCliArgs } from './cli'
+import { parseCliArgs, parseLibraryCliArgs } from './cli'
 
 const asin = 'B0819W19WD'
 
@@ -169,5 +169,49 @@ describe('parseCliArgs limit', () => {
     expect(() => parseCliArgs(['--asin', asin, '--limit', '1.5'], {})).toThrow(
       /--limit/
     )
+  })
+})
+
+describe('parseLibraryCliArgs', () => {
+  const env = { HOME: '/Users/reader' }
+
+  test('does not require an asin', () => {
+    expect(() => parseLibraryCliArgs([], env)).not.toThrow()
+  })
+
+  test('defaults to the shared session profile', () => {
+    // The picker has no book to key a profile off, so it must use the
+    // account-wide session.
+    expect(parseLibraryCliArgs([], env).userDataDir).toBe(
+      '/Users/reader/Library/Application Support/kindle-ai-export/session'
+    )
+  })
+
+  test('honours an explicit --user-data-dir', () => {
+    expect(
+      parseLibraryCliArgs(['--user-data-dir', '/tmp/session'], env).userDataDir
+    ).toBe('/tmp/session')
+  })
+
+  test('supports --json', () => {
+    expect(parseLibraryCliArgs(['--json'], env).json).toBe(true)
+  })
+
+  test('supports --out-file', () => {
+    expect(
+      parseLibraryCliArgs(['--out-file', '/tmp/lib.json'], env).outFile
+    ).toBe('/tmp/lib.json')
+  })
+
+  test('supports --limit', () => {
+    expect(parseLibraryCliArgs(['--limit', '25'], env).limit).toBe(25)
+  })
+
+  test('rejects an unknown flag', () => {
+    expect(() => parseLibraryCliArgs(['--nope'], env)).toThrow(/--nope/)
+  })
+
+  test('throws when HOME is unset and no profile is given', () => {
+    expect(() => parseLibraryCliArgs([], {})).toThrow(/--user-data-dir/)
   })
 })
