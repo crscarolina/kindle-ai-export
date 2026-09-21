@@ -1,3 +1,5 @@
+import type { NavUnit } from './lib/book-index'
+
 export interface BookMetadata {
   meta: AmazonBookMeta
   info: AmazonBookInfo
@@ -8,6 +10,12 @@ export interface BookMetadata {
 }
 
 export interface Nav {
+  /**
+   * How this book numbers itself. Books with no print edition have no page
+   * numbers, so they are indexed by Kindle location instead.
+   */
+  unit: NavUnit
+
   startPosition: number // inclusive
   endPosition: number // inclusive?
 

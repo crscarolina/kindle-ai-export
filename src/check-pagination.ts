@@ -42,7 +42,13 @@ async function main() {
     `no library found at ${libraryPath}; run src/list-library.ts first`
   )
 
-  const books = opts.limit ? library.slice(0, opts.limit) : library
+  const wanted = opts.asins && new Set(opts.asins)
+  const selected = wanted
+    ? library.filter((book) => wanted.has(book.asin))
+    : library
+  assert(selected.length, `none of the requested books are in ${libraryPath}`)
+
+  const books = opts.limit ? selected.slice(0, opts.limit) : selected
   const context = await launchKindleContext({
     userDataDir: opts.userDataDir,
     headless: true

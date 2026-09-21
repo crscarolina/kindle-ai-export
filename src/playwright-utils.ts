@@ -47,6 +47,16 @@ export function parsePageNav(text: string | null): PageNav | undefined {
   }
 }
 
+/**
+ * The book's own number for wherever the reader currently is.
+ *
+ * Paginated books report a page; books with no print edition report a Kindle
+ * location. Either way it is the unit the export is indexed by.
+ */
+export function navUnitValue(nav: PageNav | undefined): number | undefined {
+  return nav?.page ?? nav?.location
+}
+
 export function parseTocItems(
   tocItems: TocItem[],
   { totalNumPages }: { totalNumPages: number }
