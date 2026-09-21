@@ -188,9 +188,13 @@ async function main() {
       )
     : undefined
 
+  const pages = opts.limit
+    ? metadata.pages.slice(0, opts.limit)
+    : metadata.pages
+
   const content: ContentChunk[] = (
     await pMap(
-      metadata.pages,
+      pages,
       async (pageChunk, pageChunkIndex) => {
         const { screenshot, index, page } = pageChunk
 
@@ -241,7 +245,7 @@ async function main() {
             event: 'page',
             index,
             page,
-            total: metadata.pages.length
+            total: pages.length
           })
 
           return result

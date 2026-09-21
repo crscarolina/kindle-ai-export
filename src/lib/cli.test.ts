@@ -133,3 +133,41 @@ describe('parseCliArgs booleans', () => {
     expect(opts.asin).toBe(asin)
   })
 })
+
+describe('parseCliArgs limit', () => {
+  test('limit is undefined by default', () => {
+    expect(parseCliArgs(['--asin', asin], {}).limit).toBeUndefined()
+  })
+
+  test('reads a page limit', () => {
+    expect(parseCliArgs(['--asin', asin, '--limit', '50'], {}).limit).toBe(50)
+  })
+
+  test('accepts the --limit=n form', () => {
+    expect(parseCliArgs(['--asin', asin, '--limit=50'], {}).limit).toBe(50)
+  })
+
+  test('rejects a non-numeric limit', () => {
+    expect(() => parseCliArgs(['--asin', asin, '--limit', 'lots'], {})).toThrow(
+      /--limit/
+    )
+  })
+
+  test('rejects a zero limit', () => {
+    expect(() => parseCliArgs(['--asin', asin, '--limit', '0'], {})).toThrow(
+      /--limit/
+    )
+  })
+
+  test('rejects a negative limit', () => {
+    expect(() => parseCliArgs(['--asin', asin, '--limit', '-5'], {})).toThrow(
+      /--limit/
+    )
+  })
+
+  test('rejects a fractional limit', () => {
+    expect(() => parseCliArgs(['--asin', asin, '--limit', '1.5'], {})).toThrow(
+      /--limit/
+    )
+  })
+})

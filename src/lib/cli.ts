@@ -17,13 +17,16 @@ export type CliOptions = {
   json: boolean
   /** Redo work that has already been completed. */
   force: boolean
+  /** Process at most this many pages. Useful for previewing a long book. */
+  limit: number | undefined
 }
 
 const VALUE_FLAGS = new Set([
   '--asin',
   '--work-dir',
   '--user-data-dir',
-  '--out-file'
+  '--out-file',
+  '--limit'
 ])
 const BOOLEAN_FLAGS = new Set(['--json', '--force'])
 
@@ -60,6 +63,19 @@ function tokenize(argv: string[]): Map<string, string | true> {
   }
 
   return flags
+}
+
+function parseLimit(raw: string | undefined): number | undefined {
+  if (raw === undefined) {
+    return
+  }
+
+  const limit = Number(raw)
+  if (!Number.isInteger(limit) || limit < 1) {
+    throw new Error(`Invalid --limit: ${raw} (expected a positive integer)`)
+  }
+
+  return limit
 }
 
 /**
@@ -101,6 +117,7 @@ export function parseCliArgs(
     userDataDir: value('--user-data-dir') ?? path.join(bookDir, 'data'),
     outFile: value('--out-file'),
     json: flags.get('--json') === true,
-    force: flags.get('--force') === true || env.FORCE === 'true'
+    force: flags.get('--force') === true || env.FORCE === 'true',
+    limit: parseLimit(value('--limit'))
   }
 }

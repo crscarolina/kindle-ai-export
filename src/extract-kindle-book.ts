@@ -598,6 +598,10 @@ async function main() {
       break
     }
 
+    if (opts.limit !== undefined && result.pages.length >= opts.limit) {
+      break
+    }
+
     const index = result.pages.length
 
     const src = (await page
@@ -668,7 +672,7 @@ async function main() {
       event: 'page',
       index,
       page: pageNav.page,
-      total: result.nav.totalNumContentPages
+      total: opts.limit ?? result.nav.totalNumContentPages
     })
     await writeResultMetadata()
 
