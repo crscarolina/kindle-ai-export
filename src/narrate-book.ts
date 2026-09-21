@@ -17,6 +17,13 @@ import {
   type PageDuration
 } from './lib/m4b'
 import { splitForNarration } from './lib/narration'
+import {
+  describeRemaining,
+  estimateRemainingMs,
+  formatDuration,
+  projectTotal,
+  realtimeFactor
+} from './lib/progress'
 import { findVoice } from './lib/voices'
 import { joinWavFiles, wavDurationSeconds } from './lib/wav'
 import {
@@ -47,6 +54,7 @@ async function main() {
   const opts = parseCliArgs(process.argv.slice(2), process.env)
   const reporter = createReporter({ json: opts.json })
   reporter.emit({ event: 'step-start', step: 'audio' })
+  const runStartedAt = Date.now()
 
   const content = await readJsonFile<ContentChunk[]>(
     await resolveContentPath(opts.bookDir)
@@ -59,8 +67,10 @@ async function main() {
 
   const chunks = opts.limit ? content.slice(0, opts.limit) : content
   const voice = findVoice(opts.voice)!
+  const pace =
+    opts.speed === 1 ? '' : ` at ${Math.round(opts.speed * 100)}% speed`
   reporter.log(
-    `narrating as ${voice.name} (${voice.accent} ${voice.gender.toLowerCase()}, Kokoro grade ${voice.grade})`
+    `narrating ${chunks.length} page${chunks.length === 1 ? '' : 's'} as ${voice.name} (${voice.accent} ${voice.gender.toLowerCase()}, Kokoro grade ${voice.grade})${pace}`
   )
 
   // The voice is part of the cache key, so switching voices re-synthesises
@@ -68,7 +78,12 @@ async function main() {
   const cacheDir = path.join(
     opts.bookDir,
     'audio',
-    hashObject({ model: MODEL_ID, voice: voice.id, chunks: chunks.length })
+    hashObject({
+      model: MODEL_ID,
+      voice: voice.id,
+      speed: opts.speed,
+      chunks: chunks.length
+    })
   )
   await fs.mkdir(cacheDir, { recursive: true })
 
@@ -80,10 +95,15 @@ async function main() {
 
   const piecePaths: string[] = []
   const durations: PageDuration[] = []
+  const startedAt = Date.now()
+  let audioSeconds = 0
+  let synthesised = 0
+  let reused = 0
 
   for (const [chunkIndex, chunk] of chunks.entries()) {
     const pieces = splitForNarration(chunk.text, PIECE_CHARS)
     let seconds = 0
+    let pageSynthesised = 0
 
     for (const [pieceIndex, piece] of pieces.entries()) {
       const piecePath = path.join(
@@ -95,13 +115,21 @@ async function main() {
       )
 
       if (opts.force || !(await fileExists(piecePath))) {
-        const audio = await tts.generate(piece, { voice: voice.id as any })
+        const audio = await tts.generate(piece, {
+          voice: voice.id as any,
+          speed: opts.speed
+        })
         await fs.writeFile(piecePath, Buffer.from(audio.toWav()))
+        pageSynthesised++
       }
 
       piecePaths.push(piecePath)
       seconds += wavDurationSeconds(await fs.readFile(piecePath))
     }
+
+    synthesised += pageSynthesised
+    reused += pieces.length - pageSynthesised
+    audioSeconds += seconds
 
     durations.push({ page: chunk.page, seconds })
     reporter.emit({
@@ -110,7 +138,43 @@ async function main() {
       page: chunk.page,
       total: chunks.length
     })
+
+    const done = chunkIndex + 1
+    const elapsedMs = Date.now() - startedAt
+    const remainingMs = estimateRemainingMs({
+      completed: done,
+      total: chunks.length,
+      elapsedMs
+    })
+    const projectedAudio = projectTotal({
+      completed: done,
+      total: chunks.length,
+      value: audioSeconds
+    })
+
+    const cached = pieces.length - pageSynthesised
+    const parts = [
+      `page ${chunk.page} (${done}/${chunks.length}): ${pageSynthesised} synthesised` +
+        (cached ? `, ${cached} reused from cache` : ''),
+      `${formatDuration(audioSeconds)} of audio so far`
+    ]
+
+    const eta = describeRemaining(remainingMs)
+    if (eta) {
+      parts.push(eta)
+    }
+
+    if (projectedAudio !== undefined && done < chunks.length) {
+      parts.push(`roughly ${formatDuration(projectedAudio)} in total`)
+    }
+
+    reporter.log(parts.join(' · '))
   }
+
+  const synthesisMs = Date.now() - startedAt
+  reporter.log(
+    `synthesis done: ${synthesised} piece${synthesised === 1 ? '' : 's'} synthesised, ${reused} reused from cache`
+  )
 
   assert(piecePaths.length, 'no audio was produced')
 
@@ -148,6 +212,21 @@ async function main() {
   } finally {
     await fs.rm(stagingDir, { recursive: true, force: true })
   }
+
+  // Measured rather than assumed: the factor is what makes the next book's
+  // estimate right for this machine. A resumed run synthesised nothing, so it
+  // has no speed to report -- "0.00x realtime" would read as a
+  // catastrophically slow machine rather than as a cache hit.
+  const factor = synthesised
+    ? realtimeFactor({ elapsedMs: synthesisMs, audioSeconds })
+    : undefined
+  const detail = factor
+    ? `${factor.toFixed(2)}x realtime over ${formatDuration(synthesisMs / 1000)} of synthesis${reused ? `, ${reused} pieces from cache` : ''}`
+    : `${synthesised} synthesised, ${reused} from cache`
+
+  reporter.log(
+    `${formatDuration(audioSeconds)} of audio in ${formatDuration((Date.now() - runStartedAt) / 1000)} (${detail})`
+  )
 
   reporter.emit({ event: 'step-done', step: 'audio' })
   reporter.emit({ event: 'done', outFile })

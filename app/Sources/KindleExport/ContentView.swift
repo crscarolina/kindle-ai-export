@@ -207,8 +207,24 @@ struct BookCell: View {
   }
 }
 
+/// The pipeline's output, tailed like `tail -f`.
+///
+/// Opens on the newest lines and keeps them in view, but stops following the
+/// moment the reader scrolls back, so reading earlier output during a run is
+/// not interrupted by every line that arrives.
 struct LogDrawer: View {
   @Bindable var model: AppModel
+
+  @State private var isFollowing = true
+  /// How long the log was when following stopped, so the badge can say how
+  /// much has arrived out of sight since.
+  @State private var pausedAtCount = 0
+  /// Geometry from the first layout passes arrives before the scroll view has
+  /// settled on its bottom anchor, and acting on it would drop out of
+  /// following before the reader has touched anything.
+  @State private var hasSettled = false
+
+  private let scrollSpace = "log"
 
   var body: some View {
     VStack(spacing: 0) {
@@ -236,23 +252,94 @@ struct LogDrawer: View {
       Divider()
 
       ScrollViewReader { proxy in
-        ScrollView {
-          LazyVStack(alignment: .leading, spacing: 1) {
-            ForEach(Array(model.log.enumerated()), id: \.offset) { entry in
-              Text(entry.element)
-                .font(.system(.caption, design: .monospaced))
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .id(entry.offset)
+        GeometryReader { viewport in
+          ScrollView {
+            LazyVStack(alignment: .leading, spacing: 1) {
+              ForEach(Array(model.log.enumerated()), id: \.offset) { entry in
+                Text(entry.element)
+                  .font(.system(.caption, design: .monospaced))
+                  .textSelection(.enabled)
+                  .frame(maxWidth: .infinity, alignment: .leading)
+                  .id(entry.offset)
+              }
+            }
+            .padding(8)
+            .background { measure(viewport: viewport.size.height) }
+          }
+          .coordinateSpace(.named(scrollSpace))
+          // The bottom anchor puts the newest lines on screen in the very
+          // first frame, with none of the visible travel an onAppear scroll
+          // would show. Dropping it while paused stops appended lines from
+          // shifting what the reader is looking at.
+          .defaultScrollAnchor(isFollowing ? UnitPoint.bottom : nil)
+          .onChange(of: model.log.count) { _, count in
+            if count == 0 {
+              // Clearing the log -- which every run does as it starts --
+              // leaves the panel following again.
+              isFollowing = true
+              pausedAtCount = 0
+            } else if isFollowing {
+              proxy.scrollTo(count - 1, anchor: .bottom)
             }
           }
-          .padding(8)
-        }
-        .onChange(of: model.log.count) { _, count in
-          proxy.scrollTo(count - 1, anchor: .bottom)
+          .overlay(alignment: .bottomTrailing) { jumpToBottom(proxy) }
+          .task {
+            try? await Task.sleep(for: .milliseconds(200))
+            hasSettled = true
+          }
         }
       }
     }
     .background(.background.secondary)
+  }
+
+  /// Reports where the content sits inside the scroll view as it moves.
+  private func measure(viewport: CGFloat) -> some View {
+    GeometryReader { content in
+      let metrics = ScrollMetrics(
+        offset: -content.frame(in: .named(scrollSpace)).minY,
+        contentHeight: content.size.height,
+        viewportHeight: viewport)
+
+      Color.clear.onChange(of: metrics) { _, moved in
+        follow(ifAtBottom: moved)
+      }
+    }
+  }
+
+  private func follow(ifAtBottom metrics: ScrollMetrics) {
+    guard hasSettled else { return }
+
+    let atBottom = metrics.isAtBottom()
+    guard atBottom != isFollowing else { return }
+
+    isFollowing = atBottom
+    if !atBottom { pausedAtCount = model.log.count }
+  }
+
+  private var linesBelow: Int {
+    max(0, model.log.count - pausedAtCount)
+  }
+
+  @ViewBuilder
+  private func jumpToBottom(_ proxy: ScrollViewProxy) -> some View {
+    if !isFollowing, !model.log.isEmpty {
+      Button {
+        isFollowing = true
+        proxy.scrollTo(model.log.count - 1, anchor: .bottom)
+      } label: {
+        HStack(spacing: 4) {
+          Image(systemName: "arrow.down")
+          Text(linesBelow > 0 ? "\(linesBelow) new" : "Latest")
+        }
+        .font(.caption)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(.thinMaterial, in: Capsule())
+      }
+      .buttonStyle(.plain)
+      .help("Jump to the end of the log")
+      .padding(8)
+    }
   }
 }

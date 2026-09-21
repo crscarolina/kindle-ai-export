@@ -214,6 +214,47 @@ t.expectEqual(
 t.expectEqual(
   ExportOptions().voice, "af_heart", "the flagship voice is the default")
 
+// MARK: - Narration pace
+
+t.expect(
+  !ExportCommand(step: .audio, asin: "A", workDir: "/w", userDataDir: "/s", speed: 1)
+    .arguments.contains("--speed"),
+  "the natural pace is left implicit")
+
+t.expectEqual(
+  ExportCommand(
+    step: .audio, asin: "A", workDir: "/w", userDataDir: "/s", speed: 0.9
+  ).arguments.suffix(2).map { $0 },
+  ["--speed", "0.9"], "a slower pace is passed through")
+
+t.expectEqual(
+  ExportCommand(
+    step: .audio, asin: "A", workDir: "/w", userDataDir: "/s", speed: 1.25
+  ).arguments.suffix(2).map { $0 },
+  ["--speed", "1.25"], "a faster pace is passed through")
+
+// Only narration understands a pace; the other steps would reject it.
+for step in ExportStep.allCases where step != .audio {
+  t.expect(
+    !ExportCommand(
+      step: step, asin: "A", workDir: "/w", userDataDir: "/s", speed: 0.9
+    ).arguments.contains("--speed"),
+    "\(step.rawValue) is not given a pace")
+}
+
+t.expectEqual(ExportCommand.format(1), "1", "a whole pace has no decimal point")
+t.expectEqual(ExportCommand.format(0.9), "0.9", "a fractional pace keeps its decimal")
+t.expectEqual(ExportCommand.format(1.25), "1.25", "two decimals survive")
+
+t.expectEqual(ExportOptions().speed, 1, "the natural pace is the default")
+
+t.expectEqual(
+  ExportPlan.commands(
+    asin: "B1", options: ExportOptions(formats: [.audio], speed: 0.9),
+    state: BookState(), workDir: "/w", userDataDir: "/s", destination: nil
+  ).first(where: { $0.step == .audio })?.speed,
+  0.9, "the plan carries the chosen pace to narration")
+
 // MARK: - ExportPlan
 
 func steps(
@@ -333,6 +374,72 @@ t.expectEqual(
   ExportPlan.artifactPath(in: "/Books", step: .audio, asin: "B1"),
   "/Books/B1.m4b", "audio lands as an m4b audiobook")
 
+// MARK: - Log tailing
+
+// A short log that does not fill the panel is always at its end.
+t.expect(
+  ScrollMetrics(offset: 0, contentHeight: 40, viewportHeight: 180).isAtBottom(),
+  "content shorter than the viewport counts as the bottom")
+
+t.expect(
+  ScrollMetrics(offset: 0, contentHeight: 180, viewportHeight: 180).isAtBottom(),
+  "content exactly filling the viewport counts as the bottom")
+
+t.expectEqual(
+  ScrollMetrics(offset: 0, contentHeight: 40, viewportHeight: 180).maxOffset,
+  0, "content that fits cannot be scrolled")
+
+t.expect(
+  ScrollMetrics(offset: 820, contentHeight: 1000, viewportHeight: 180).isAtBottom(),
+  "resting exactly on the last line keeps following")
+
+t.expect(
+  ScrollMetrics(offset: 819, contentHeight: 1000, viewportHeight: 180).isAtBottom(),
+  "a point short of the end still keeps following")
+
+t.expect(
+  ScrollMetrics(offset: 820 - ScrollMetrics.bottomSlop, contentHeight: 1000, viewportHeight: 180)
+    .isAtBottom(),
+  "the slop itself is still the bottom")
+
+t.expect(
+  !ScrollMetrics(offset: 819 - ScrollMetrics.bottomSlop, contentHeight: 1000, viewportHeight: 180)
+    .isAtBottom(),
+  "a point beyond the slop stops following")
+
+// Scrolled back through a long run: new lines must not yank the reader down.
+t.expect(
+  !ScrollMetrics(offset: 0, contentHeight: 40_000, viewportHeight: 180).isAtBottom(),
+  "the top of a large scrollback is not the bottom")
+
+t.expect(
+  !ScrollMetrics(offset: 12_000, contentHeight: 40_000, viewportHeight: 180).isAtBottom(),
+  "the middle of a large scrollback is not the bottom")
+
+t.expect(
+  ScrollMetrics(offset: 39_820, contentHeight: 40_000, viewportHeight: 180).isAtBottom(),
+  "the end of a large scrollback follows again")
+
+// Appending a line moves the end away, so an already-following reader is
+// carried with it while a paused one is not.
+let grown = ScrollMetrics(offset: 820, contentHeight: 1014, viewportHeight: 180)
+t.expect(grown.isAtBottom(), "one appended line stays within the slop")
+t.expect(
+  !ScrollMetrics(offset: 820, contentHeight: 1200, viewportHeight: 180).isAtBottom(),
+  "many appended lines leave the reader behind the end")
+
+t.expect(
+  ScrollMetrics(offset: 0, contentHeight: 0, viewportHeight: 0).isAtBottom(),
+  "an unmeasured panel starts out following")
+
+t.expect(
+  ScrollMetrics(offset: .nan, contentHeight: 1000, viewportHeight: 180).isAtBottom(),
+  "an unmeasurable offset falls back to following")
+
+t.expect(
+  !ScrollMetrics(offset: 500, contentHeight: 1000, viewportHeight: 180).isAtBottom(slop: 0),
+  "a caller can demand an exact bottom")
+
 // MARK: - CLIRunner (integration)
 //
 // Opt-in: actually spawns the Node pipeline. Guarded because it needs a real
@@ -368,5 +475,52 @@ if let repo = ProcessInfo.processInfo.environment["KINDLE_EXPORT_INTEGRATION"] {
 } else {
   print("(skipping CLIRunner integration; set KINDLE_EXPORT_INTEGRATION)")
 }
+
+// MARK: - Job notifications
+
+let finishedNotice = JobNotification.forOutcome(
+  book: "Uprooted",
+  outcome: .finished(artifacts: ["/Books/B1.md", "/Books/B1.m4b"]),
+  destination: "/Users/reader/Books")
+
+t.expectEqual(finishedNotice.title, "Export finished", "a completed export says so")
+t.expect(finishedNotice.body.contains("Uprooted"), "the book is named")
+t.expect(finishedNotice.body.contains("B1.md"), "the artifacts are listed")
+t.expect(finishedNotice.body.contains("Books"), "the destination folder is named")
+t.expect(!finishedNotice.isFailure, "a completed export is not a failure")
+
+// Listing every file would overflow a notification banner.
+let manyArtifacts = JobNotification.forOutcome(
+  book: "Uprooted",
+  outcome: .finished(artifacts: ["/b/a.md", "/b/a.pdf", "/b/a.m4b", "/b/a.txt"]),
+  destination: "/b")
+t.expect(manyArtifacts.body.contains("2 more"), "a long artifact list is summarised")
+
+t.expect(
+  JobNotification.forOutcome(
+    book: "Uprooted", outcome: .finished(artifacts: []), destination: "/b"
+  ).body.contains("Uprooted"),
+  "a run with no artifacts still names the book")
+
+// Failures arrive as multi-line stderr; a banner shows a line or two.
+let failedNotice = JobNotification.forOutcome(
+  book: "Hamlet",
+  outcome: .failed("ffmpeg exited with 1\nat /some/path\nand more detail"))
+t.expectEqual(failedNotice.title, "Export failed", "a failed export says so")
+t.expect(failedNotice.isFailure, "a failed export is flagged as one")
+t.expect(failedNotice.body.contains("ffmpeg exited with 1"), "the first line survives")
+t.expect(!failedNotice.body.contains("and more detail"), "the trailing detail is dropped")
+t.expect(
+  failedNotice.body.split(separator: "\n").count == 1,
+  "the body stays a single line")
+
+t.expect(
+  JobNotification.forOutcome(book: "Hamlet", outcome: .failed("   "))
+    .body.contains("unknown error"),
+  "an empty failure reason still says something")
+
+t.expectEqual(
+  JobNotification.forOutcome(book: "Hamlet", outcome: .cancelled).title,
+  "Export cancelled", "a cancelled export says so")
 
 t.finish(suite: "KindleExportCore")

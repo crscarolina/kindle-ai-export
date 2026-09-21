@@ -1,6 +1,51 @@
 import KindleExportCore
 import SwiftUI
 
+/// The surface a floating toolbar group is drawn on.
+///
+/// A material reads grey over the `.bar` background, whereas the real Tahoe
+/// pills read as a control surface: opaque white in light appearance, and a
+/// translucent white wash in dark appearance that sits above the bar rather
+/// than sinking into it. `controlColor` is exactly that pair.
+private let pillFill = Color(nsColor: .controlColor)
+
+/// The fill behind one toolbar icon, covering both selection and hover.
+///
+/// Hover belongs on the icon rather than on the capsule: Finder highlights the
+/// single view-mode icon under the pointer, not the whole group.
+private struct ToolbarIconHighlight: ViewModifier {
+  var isOn: Bool
+  var disabled: Bool
+  @State private var isHovering = false
+
+  /// Derived from the label colour, so the wash darkens the icon in light
+  /// appearance and lightens it in dark appearance. A hovered selection goes
+  /// one step further so it stays distinct from both plain states.
+  private var fillOpacity: Double {
+    switch (isOn, isHovering && !disabled) {
+    case (true, true): 0.16
+    case (true, false): 0.10
+    case (false, true): 0.06
+    case (false, false): 0
+    }
+  }
+
+  func body(content: Content) -> some View {
+    content
+      .background(Color.primary.opacity(fillOpacity), in: RoundedRectangle(cornerRadius: 7))
+      .contentShape(RoundedRectangle(cornerRadius: 7))
+      .onHover { isHovering = $0 }
+      .animation(.easeOut(duration: 0.12), value: fillOpacity)
+  }
+}
+
+extension View {
+  /// Gives a toolbar control the capsule's selection and hover feedback.
+  func toolbarIconHighlight(isOn: Bool = false, disabled: Bool = false) -> some View {
+    modifier(ToolbarIconHighlight(isOn: isOn, disabled: disabled))
+  }
+}
+
 /// A floating capsule that groups related controls, as in the macOS 26
 /// Finder toolbar.
 struct ToolbarCapsule<Content: View>: View {
@@ -12,7 +57,7 @@ struct ToolbarCapsule<Content: View>: View {
     }
     .padding(.horizontal, 6)
     .padding(.vertical, 5)
-    .background(.regularMaterial, in: Capsule())
+    .background(pillFill, in: Capsule())
     .overlay(Capsule().strokeBorder(.quaternary, lineWidth: 0.5))
     .shadow(color: .black.opacity(0.08), radius: 2, y: 1)
   }
@@ -31,11 +76,7 @@ struct ToolbarIconButton: View {
       Image(systemName: symbol)
         .font(.system(size: 15, weight: .medium))
         .frame(width: 30, height: 24)
-        .background(
-          isOn ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.clear),
-          in: RoundedRectangle(cornerRadius: 7)
-        )
-        .contentShape(RoundedRectangle(cornerRadius: 7))
+        .toolbarIconHighlight(isOn: isOn, disabled: disabled)
     }
     .buttonStyle(.plain)
     .disabled(disabled)
@@ -116,7 +157,7 @@ struct TopBar: View {
             }
             .frame(height: 24)
             .padding(.horizontal, 4)
-            .contentShape(Rectangle())
+            .toolbarIconHighlight()
           }
           .buttonStyle(.plain)
           .help("Export queue")
@@ -154,7 +195,7 @@ struct TopBar: View {
     }
     .padding(.horizontal, 12)
     .padding(.vertical, 8)
-    .background(.regularMaterial, in: Capsule())
+    .background(pillFill, in: Capsule())
     .overlay(Capsule().strokeBorder(.quaternary, lineWidth: 0.5))
     .shadow(color: .black.opacity(0.08), radius: 2, y: 1)
   }

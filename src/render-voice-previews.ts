@@ -43,10 +43,11 @@ async function main() {
   const text = await fs.readFile(PREVIEW_TEXT_PATH, 'utf8')
   const pieces = splitForNarration(text, PIECE_CHARS)
 
-  const voices = opts.voice
-    ? VOICES.filter((voice) => voice.id === opts.voice)
+  const wanted = opts.voiceIds && new Set(opts.voiceIds)
+  const voices = wanted
+    ? VOICES.filter((voice) => wanted.has(voice.id))
     : VOICES
-  assert(voices.length, `unknown voice: ${opts.voice}`)
+  assert(voices.length, 'no voices selected')
 
   reporter.log(`loading ${MODEL_ID}`)
   const tts = await KokoroTTS.from_pretrained(MODEL_ID, {
@@ -55,14 +56,19 @@ async function main() {
   })
 
   for (const [index, voice] of voices.entries()) {
-    const outFile = path.join(outDir, `${voice.id}.m4b`)
+    // Speed is part of the filename so auditions at different paces coexist.
+    const suffix = opts.speed === 1 ? '' : `@${opts.speed}x`
+    const outFile = path.join(outDir, `${voice.id}${suffix}.m4b`)
 
     if (!opts.force && (await fileExists(outFile))) {
       reporter.log(`${voice.id}: already rendered`)
     } else {
       const parts: Buffer[] = []
       for (const piece of pieces) {
-        const audio = await tts.generate(piece, { voice: voice.id as any })
+        const audio = await tts.generate(piece, {
+          voice: voice.id as any,
+          speed: opts.speed
+        })
         parts.push(Buffer.from(audio.toWav()))
       }
 
@@ -74,7 +80,10 @@ async function main() {
         await fs.writeFile(
           meta,
           buildChapterMetadata([], {
-            title: `${voice.name} \u2014 voice preview`,
+            title:
+              opts.speed === 1
+                ? `${voice.name} \u2014 voice preview`
+                : `${voice.name} \u2014 voice preview at ${Math.round(opts.speed * 100)}%`,
             artist: `Kokoro ${voice.accent} ${voice.gender.toLowerCase()}`
           })
         )
@@ -98,13 +107,21 @@ async function main() {
   await fs.writeFile(
     manifest,
     JSON.stringify(
-      voices.map((voice) => ({ ...voice, preview: `${voice.id}.m4b` })),
+      voices.map((voice) => ({
+        ...voice,
+        speed: opts.speed,
+        preview: `${voice.id}${suffixFor(opts.speed)}.m4b`
+      })),
       null,
       2
     )
   )
 
   reporter.emit({ event: 'done', outFile: manifest })
+}
+
+function suffixFor(speed: number): string {
+  return speed === 1 ? '' : `@${speed}x`
 }
 
 await main()

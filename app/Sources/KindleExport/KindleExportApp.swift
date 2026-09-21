@@ -11,6 +11,7 @@ struct KindleExportApp: App {
         .frame(minWidth: 1000, minHeight: 640)
         .task {
           model.loadCachedLibrary()
+          await model.requestNotificationAuthorization()
           await model.loadVoices()
         }
     }

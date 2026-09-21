@@ -15,6 +15,8 @@ public struct ExportCommand: Equatable, Sendable {
   public let force: Bool
   /// Kokoro voice id, for the narration step.
   public let voice: String?
+  /// Narration speed, 1 being the voice's natural pace.
+  public let speed: Double?
 
   public init(
     step: ExportStep,
@@ -24,7 +26,8 @@ public struct ExportCommand: Equatable, Sendable {
     outFile: String? = nil,
     limit: Int? = nil,
     force: Bool = false,
-    voice: String? = nil
+    voice: String? = nil,
+    speed: Double? = nil
   ) {
     self.step = step
     self.asin = asin
@@ -34,6 +37,14 @@ public struct ExportCommand: Equatable, Sendable {
     self.limit = limit
     self.force = force
     self.voice = voice
+    self.speed = speed
+  }
+
+  /// Trim a trailing ".0" so 0.9 and 1.25 both read naturally.
+  public static func format(_ speed: Double) -> String {
+    speed == speed.rounded()
+      ? String(Int(speed))
+      : String(speed)
   }
 
   /// The script this step runs, relative to the repo root.
@@ -67,9 +78,15 @@ public struct ExportCommand: Equatable, Sendable {
     if force {
       args.append("--force")
     }
-    // Only the narration step understands a voice.
-    if let voice, step == .audio {
-      args += ["--voice", voice]
+    // Only the narration step understands a voice or a pace.
+    if step == .audio {
+      if let voice {
+        args += ["--voice", voice]
+      }
+      // Omitted at the natural pace, so the command stays the shorter form.
+      if let speed, speed != 1 {
+        args += ["--speed", Self.format(speed)]
+      }
     }
 
     return args

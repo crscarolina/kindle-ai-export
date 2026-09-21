@@ -20,9 +20,15 @@ RESOURCES="$APP/Contents/Resources"
 swift build -c "$CONFIG" --package-path "$ROOT"
 BIN="$(swift build -c "$CONFIG" --package-path "$ROOT" --show-bin-path)/KindleExport"
 
+# The .icns is committed, so this only fires when someone edits the artwork.
+if [ "$ROOT/Resources/AppIcon.png" -nt "$ROOT/Resources/AppIcon.icns" ]; then
+  "$ROOT/make-icon.sh"
+fi
+
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$RESOURCES"
 cp "$BIN" "$APP/Contents/MacOS/KindleExport"
+cp "$ROOT/Resources/AppIcon.icns" "$RESOURCES/AppIcon.icns"
 
 cat > "$APP/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -34,12 +40,15 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
   <key>CFBundleDisplayName</key><string>Kindle Export</string>
   <key>CFBundleIdentifier</key><string>com.kindle-ai-export.app</string>
   <key>CFBundleExecutable</key><string>KindleExport</string>
+  <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>0.1.0</string>
   <key>CFBundleVersion</key><string>1</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSHumanReadableCopyright</key><string>MIT</string>
+  <!-- Exports run for hours, so the app reports completion by notification. -->
+  <key>NSUserNotificationAlertStyle</key><string>alert</string>
 </dict>
 </plist>
 PLIST

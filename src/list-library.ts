@@ -7,8 +7,8 @@ import { launchKindleContext } from './lib/browser'
 import { parseLibraryCliArgs } from './lib/cli'
 import { createReporter } from './lib/events'
 import {
-  buildLibrarySearchUrl,
-  LIBRARY_PAGE_SIZE,
+  collectLibraryPages,
+  type LibraryPageFetcher,
   mergeLibraryPages
 } from './lib/library'
 
@@ -39,31 +39,53 @@ async function main() {
       return
     }
 
-    // Amazon caps a page at 50 and hands back a token for the next, so the
-    // whole library takes several requests.
-    const pages: unknown[] = []
-    let paginationToken: string | undefined
+    // The request runs inside the page so it carries the reader's cookies.
+    // The AbortController bounds the request itself; `collectLibraryPages`
+    // separately bounds the `evaluate`, which Playwright will otherwise wait
+    // on forever if the page stops answering.
+    const fetchPage: LibraryPageFetcher = (url, { timeoutMs }) =>
+      page.evaluate(
+        async ([target, ms]) => {
+          const controller = new AbortController()
+          const timer = setTimeout(() => controller.abort(), ms)
 
-    for (;;) {
-      const body: any = await page.evaluate(
-        (url) =>
-          fetch(url, { credentials: 'include' }).then((res) => res.json()),
-        buildLibrarySearchUrl({ paginationToken })
+          try {
+            const res = await fetch(target, {
+              credentials: 'include',
+              signal: controller.signal
+            })
+
+            if (!res.ok) {
+              throw new Error(`HTTP ${res.status} ${res.statusText}`)
+            }
+
+            return await res.json()
+          } finally {
+            clearTimeout(timer)
+          }
+        },
+        [url, timeoutMs] as [string, number]
       )
 
-      pages.push(body)
-      const count = body?.itemsList?.length ?? 0
-      reporter.emit({
-        event: 'page',
-        index: pages.length - 1,
-        page: pages.length,
-        total: pages.length + (body?.paginationToken ? 1 : 0)
-      })
-
-      paginationToken = body?.paginationToken
-      if (!paginationToken || count < LIBRARY_PAGE_SIZE) break
-      if (opts.limit && pages.length * LIBRARY_PAGE_SIZE >= opts.limit) break
-    }
+    // Amazon caps a page at 50 and hands back a token for the next, so the
+    // whole library takes several requests.
+    const pages = await collectLibraryPages({
+      fetchPage,
+      limit: opts.limit,
+      onPage: ({ page: pageNumber, fetched, hasMore }) => {
+        reporter.emit({
+          event: 'page',
+          index: pageNumber - 1,
+          page: pageNumber,
+          total: pageNumber + (hasMore ? 1 : 0)
+        })
+        // The library refresh has no progress bar in the app -- it renders
+        // the log -- so every page has to say something there, or a slow
+        // listing is indistinguishable from a frozen window.
+        reporter.log(`${fetched} books so far`)
+      },
+      onWarning: (message) => reporter.emit({ event: 'error', message })
+    })
 
     const merged = mergeLibraryPages(pages)
     const items = opts.limit ? merged.slice(0, opts.limit) : merged

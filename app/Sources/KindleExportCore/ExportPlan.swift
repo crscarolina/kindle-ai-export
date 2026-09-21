@@ -12,19 +12,23 @@ public struct ExportOptions: Equatable, Sendable {
   public var limit: Int?
   /// Kokoro voice id for narration.
   public var voice: String
+  /// Narration speed, 1 being the voice's natural pace.
+  public var speed: Double
 
   public init(
     formats: Set<ExportStep> = [.markdown],
     clean: Bool = true,
     force: Bool = false,
     limit: Int? = nil,
-    voice: String = "af_heart"
+    voice: String = "af_heart",
+    speed: Double = 1
   ) {
     self.formats = formats
     self.clean = clean
     self.force = force
     self.limit = limit
     self.voice = voice
+    self.speed = speed
   }
 }
 
@@ -93,7 +97,7 @@ public enum ExportPlan {
         ExportCommand(
           step: step, asin: asin, workDir: workDir, userDataDir: userDataDir,
           outFile: outFile, limit: options.limit, force: options.force,
-          voice: options.voice))
+          voice: options.voice, speed: options.speed))
     }
 
     // A preview run leaves a deliberately partial working set behind, so it

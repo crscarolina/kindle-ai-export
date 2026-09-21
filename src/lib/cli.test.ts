@@ -298,3 +298,91 @@ describe('parseCliArgs voice', () => {
     ).toThrow(/af_heart/)
   })
 })
+
+describe('parseLibraryCliArgs voice filter', () => {
+  const env = { HOME: '/Users/reader' }
+
+  test('has no filter by default', () => {
+    expect(parseLibraryCliArgs([], env).voiceIds).toBeUndefined()
+  })
+
+  test('accepts one voice', () => {
+    expect(parseLibraryCliArgs(['--voice', 'af_heart'], env).voiceIds).toEqual([
+      'af_heart'
+    ])
+  })
+
+  test('accepts a comma-separated list', () => {
+    expect(
+      parseLibraryCliArgs(['--voice', 'af_heart,af_bella'], env).voiceIds
+    ).toEqual(['af_heart', 'af_bella'])
+  })
+
+  test('resolves names as well as ids', () => {
+    expect(
+      parseLibraryCliArgs(['--voice', 'Heart,Bella'], env).voiceIds
+    ).toEqual(['af_heart', 'af_bella'])
+  })
+
+  test('rejects a typo rather than rendering nothing', () => {
+    expect(() => parseLibraryCliArgs(['--voice', 'af_hart'], env)).toThrow(
+      /af_hart/
+    )
+  })
+})
+
+describe('parseCliArgs speed', () => {
+  test('defaults to normal speed', () => {
+    expect(parseCliArgs(['--asin', asin], {}).speed).toBe(1)
+  })
+
+  test('accepts a slower speed', () => {
+    expect(parseCliArgs(['--asin', asin, '--speed', '0.9'], {}).speed).toBe(0.9)
+  })
+
+  test('accepts a faster speed', () => {
+    expect(parseCliArgs(['--asin', asin, '--speed', '1.25'], {}).speed).toBe(
+      1.25
+    )
+  })
+
+  test('falls back to the KOKORO_SPEED env var', () => {
+    expect(parseCliArgs(['--asin', asin], { KOKORO_SPEED: '0.9' }).speed).toBe(
+      0.9
+    )
+  })
+
+  test('rejects a non-numeric speed', () => {
+    expect(() => parseCliArgs(['--asin', asin, '--speed', 'slow'], {})).toThrow(
+      /--speed/
+    )
+  })
+
+  test('rejects zero', () => {
+    expect(() => parseCliArgs(['--asin', asin, '--speed', '0'], {})).toThrow(
+      /--speed/
+    )
+  })
+
+  test('rejects a negative speed', () => {
+    expect(() => parseCliArgs(['--asin', asin, '--speed', '-1'], {})).toThrow(
+      /--speed/
+    )
+  })
+
+  test('rejects a speed outside the usable range', () => {
+    // Far outside 0.5-2.0 the output stops resembling speech.
+    expect(() => parseCliArgs(['--asin', asin, '--speed', '9'], {})).toThrow(
+      /--speed/
+    )
+    expect(() => parseCliArgs(['--asin', asin, '--speed', '0.1'], {})).toThrow(
+      /--speed/
+    )
+  })
+
+  test('names the usable range when rejecting', () => {
+    expect(() => parseCliArgs(['--asin', asin, '--speed', '9'], {})).toThrow(
+      /0\.5/
+    )
+  })
+})

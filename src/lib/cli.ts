@@ -16,8 +16,10 @@ export type LibraryCliOptions = {
   limit: number | undefined
   /** Restrict to these books, rather than the whole library. */
   asins: string[] | undefined
-  /** Restrict to a single Kokoro voice. */
-  voice: string | undefined
+  /** Restrict to these Kokoro voices, rather than all of them. */
+  voiceIds: string[] | undefined
+  /** Narration speed, 1 being the voice's natural pace. */
+  speed: number
   /** Redo work that has already been completed. */
   force: boolean
 }
@@ -41,6 +43,8 @@ export type CliOptions = {
   limit: number | undefined
   /** Kokoro voice id for narration. */
   voice: string
+  /** Narration speed, 1 being the voice's natural pace. */
+  speed: number
 }
 
 const VALUE_FLAGS = new Set([
@@ -49,7 +53,8 @@ const VALUE_FLAGS = new Set([
   '--user-data-dir',
   '--out-file',
   '--limit',
-  '--voice'
+  '--voice',
+  '--speed'
 ])
 const BOOLEAN_FLAGS = new Set(['--json', '--force'])
 
@@ -113,7 +118,8 @@ export function parseLibraryCliArgs(
     json: flags.get('--json') === true,
     limit: parseLimit(value('--limit')),
     asins: parseAsinList(value('--asin')),
-    voice: value('--voice') ? parseVoice(value('--voice')) : undefined,
+    voiceIds: parseVoiceList(value('--voice')),
+    speed: parseSpeed(value('--speed') ?? env.KOKORO_SPEED),
     force: flags.get('--force') === true || env.FORCE === 'true'
   }
 }
@@ -171,6 +177,44 @@ function parseVoice(raw: string | undefined): string {
   return voice.id
 }
 
+/**
+ * Parse a comma-separated voice filter.
+ *
+ * Each entry goes through the same resolution as `--voice` for narration, so
+ * names and ids both work and a typo is rejected rather than silently
+ * matching nothing.
+ */
+/** The range over which Kokoro still sounds like speech. */
+const MIN_SPEED = 0.5
+const MAX_SPEED = 2
+
+function parseSpeed(raw: string | undefined): number {
+  if (!raw) {
+    return 1
+  }
+
+  const speed = Number(raw)
+  if (!Number.isFinite(speed) || speed < MIN_SPEED || speed > MAX_SPEED) {
+    throw new Error(
+      `Invalid --speed: ${raw} (expected ${MIN_SPEED} to ${MAX_SPEED}, where 1 is the voice's natural pace)`
+    )
+  }
+
+  return speed
+}
+
+function parseVoiceList(raw: string | undefined): string[] | undefined {
+  if (raw === undefined) {
+    return
+  }
+
+  return raw
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .map((entry) => parseVoice(entry))
+}
+
 function parseLimit(raw: string | undefined): number | undefined {
   if (raw === undefined) {
     return
@@ -225,6 +269,7 @@ export function parseCliArgs(
     json: flags.get('--json') === true,
     force: flags.get('--force') === true || env.FORCE === 'true',
     limit: parseLimit(value('--limit')),
-    voice: parseVoice(value('--voice') ?? env.KOKORO_VOICE)
+    voice: parseVoice(value('--voice') ?? env.KOKORO_VOICE),
+    speed: parseSpeed(value('--speed') ?? env.KOKORO_SPEED)
   }
 }

@@ -164,6 +164,10 @@ final class AppModel {
   var options = ExportOptions()
 
   private var isPumping = false
+  private let notifier = Notifier()
+
+  /// Artifacts the running job has written, for the completion notification.
+  private var producedArtifacts: [String] = []
 
   var filteredLibrary: [Book] {
     guard !search.isEmpty else { return library }
@@ -214,13 +218,35 @@ final class AppModel {
 
   var previewsDir: String { settings.workDir + "/previews" }
 
-  /// The clip auditioning the currently selected voice, if it exists.
+  /// The clip auditioning the current voice and pace, if one exists.
+  ///
+  /// Falls back to the natural-pace clip so the button still works before a
+  /// preview has been rendered at the chosen speed.
   var selectedVoicePreview: URL? {
-    let url = URL(fileURLWithPath: previewsDir)
-      .appending(path: "\(options.voice).m4b")
-    return FileManager.default.fileExists(atPath: url.path(percentEncoded: false))
-      ? url
-      : nil
+    let dir = URL(fileURLWithPath: previewsDir)
+    let candidates =
+      options.speed == 1
+      ? ["\(options.voice).m4b"]
+      : ["\(options.voice)@\(ExportCommand.format(options.speed))x.m4b",
+         "\(options.voice).m4b"]
+
+    for name in candidates {
+      let url = dir.appending(path: name)
+      if FileManager.default.fileExists(atPath: url.path(percentEncoded: false)) {
+        return url
+      }
+    }
+    return nil
+  }
+
+  /// Whether the clip on offer was rendered at the chosen pace.
+  var previewMatchesPace: Bool {
+    guard let preview = selectedVoicePreview else { return true }
+    let expected =
+      options.speed == 1
+      ? "\(options.voice).m4b"
+      : "\(options.voice)@\(ExportCommand.format(options.speed))x.m4b"
+    return preview.lastPathComponent == expected
   }
 
   var selectedVoice: VoiceOption? {
@@ -250,6 +276,10 @@ final class AppModel {
     {
       voices = loaded
     }
+  }
+
+  func requestNotificationAuthorization() async {
+    await notifier.requestAuthorization()
   }
 
   func clearLog() {
@@ -378,6 +408,7 @@ final class AppModel {
 
   private func run(_ job: ExportJob) async {
     clearLog()
+    producedArtifacts = []
     let state = inspect(asin: job.item.asin)
     let commands = ExportPlan.commands(
       asin: job.item.asin,
@@ -403,11 +434,23 @@ final class AppModel {
         return
       } catch {
         job.state = .failed(error.localizedDescription)
+        await notify(job, .failed(error.localizedDescription))
         return
       }
     }
 
     job.state = .finished
+    // Only the artifacts the reader asked for, not the working files.
+    await notify(
+      job,
+      .finished(
+        artifacts: producedArtifacts.filter { $0.hasPrefix(job.destination) }))
+  }
+
+  private func notify(_ job: ExportJob, _ outcome: JobOutcome) async {
+    await notifier.post(
+      JobNotification.forOutcome(
+        book: job.item.title, outcome: outcome, destination: job.destination))
   }
 
   /// What already exists on disk for this book.
@@ -503,6 +546,9 @@ final class AppModel {
     case .error(let message):
       append("error: \(message)")
     case .done(let outFile):
+      if let outFile, job != nil {
+        producedArtifacts.append(outFile)
+      }
       append(outFile.map { "wrote \($0)" } ?? "done")
     case .bookMeta(_, let title, _):
       append(title)
