@@ -51,6 +51,21 @@ public final class CLIRunner: @unchecked Sendable {
     credentials: [String: String] = [:],
     onEvent: @escaping @Sendable (ExportEvent) -> Void
   ) async throws {
+    try await runScript(
+      command.scriptPath, arguments: command.arguments, step: command.step,
+      credentials: credentials, onEvent: onEvent)
+  }
+
+  /// Run a script that isn't part of the export pipeline, such as the
+  /// one-time sign-in or the library listing.
+  public func runScript(
+    _ scriptPath: String,
+    arguments: [String],
+    step: ExportStep = .extractBook,
+    credentials: [String: String] = [:],
+    onEvent: @escaping @Sendable (ExportEvent) -> Void
+  ) async throws {
+    let command = (scriptPath: scriptPath, arguments: arguments, step: step)
     let process = Process()
     process.executableURL = config.nodeExecutable
     process.currentDirectoryURL = config.repoRoot

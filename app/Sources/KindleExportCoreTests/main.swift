@@ -169,6 +169,83 @@ t.expect(
 t.expect(
   !base.arguments.contains("--out-file"), "omits out-file by default")
 
+// MARK: - ExportPlan
+
+func steps(
+  _ options: ExportOptions, _ state: BookState = BookState(), destination: String? = nil
+) -> [ExportStep] {
+  ExportPlan.commands(
+    asin: "B1", options: options, state: state,
+    workDir: "/w", userDataDir: "/s", destination: destination
+  ).map(\.step)
+}
+
+t.expectEqual(
+  steps(ExportOptions()),
+  [.extractBook, .transcribe, .clean, .markdown],
+  "a fresh book runs the whole pipeline")
+
+t.expectEqual(
+  steps(ExportOptions(), BookState(hasPages: true)),
+  [.transcribe, .clean, .markdown],
+  "skips extraction when pages already exist")
+
+t.expectEqual(
+  steps(ExportOptions(), BookState(hasPages: true, hasContent: true)),
+  [.clean, .markdown],
+  "skips transcription when content already exists")
+
+t.expectEqual(
+  steps(
+    ExportOptions(),
+    BookState(hasPages: true, hasContent: true, hasCleanedContent: true)),
+  [.markdown],
+  "re-exporting a finished book only rebuilds the artifact")
+
+t.expectEqual(
+  steps(
+    ExportOptions(force: true),
+    BookState(hasPages: true, hasContent: true, hasCleanedContent: true)),
+  [.extractBook, .transcribe, .clean, .markdown],
+  "force redoes every step")
+
+t.expectEqual(
+  steps(ExportOptions(clean: false), BookState(hasPages: true, hasContent: true)),
+  [.markdown],
+  "omits the cleanup pass when it is switched off")
+
+t.expectEqual(
+  steps(ExportOptions(formats: [.audio, .markdown, .pdf])),
+  [.extractBook, .transcribe, .clean, .markdown, .pdf, .audio],
+  "artifacts run in pipeline order, not set order")
+
+t.expectEqual(
+  steps(ExportOptions(formats: [])),
+  [.extractBook, .transcribe, .clean],
+  "no artifacts still prepares the content")
+
+let limited = ExportPlan.commands(
+  asin: "B1", options: ExportOptions(limit: 50), state: BookState(),
+  workDir: "/w", userDataDir: "/s", destination: nil)
+t.expect(
+  limited.allSatisfy { $0.arguments.contains("--limit") },
+  "a page limit reaches every step")
+
+let destined = ExportPlan.commands(
+  asin: "B1", options: ExportOptions(formats: [.markdown, .pdf]), state: BookState(),
+  workDir: "/w", userDataDir: "/s", destination: "/Books")
+t.expectEqual(
+  destined.compactMap(\.outFile),
+  ["/Books/B1.md", "/Books/B1.pdf"],
+  "artifacts land in the chosen destination")
+t.expect(
+  destined.first(where: { $0.step == .extractBook })?.outFile == nil,
+  "the working steps are not redirected to the destination")
+
+t.expectEqual(
+  ExportPlan.artifactPath(in: "/Books", step: .audio, asin: "B1"),
+  "/Books/B1.wav", "audio lands as a wav")
+
 // MARK: - CLIRunner (integration)
 //
 // Opt-in: actually spawns the Node pipeline. Guarded because it needs a real
