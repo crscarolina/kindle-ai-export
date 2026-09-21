@@ -171,7 +171,7 @@ async function main() {
           // TODO: these TAR files have some useful metadata that we could use...
           const params = Object.fromEntries(url.searchParams.entries())
           const hash = hashObject(params)
-          const renderDir = path.join(userDataDir, 'render', hash)
+          const renderDir = path.join(outDir, 'render', hash)
           await fs.mkdir(renderDir, { recursive: true })
           const body = await response.body()
           const tempDir = await extractTar(body, { cwd: renderDir })
@@ -188,7 +188,7 @@ async function main() {
           if (locationMap) {
             result.locationMap = locationMap
 
-            for (const navUnit of result.locationMap.navigationUnit) {
+            for (const navUnit of result.locationMap.navigationUnit ?? []) {
               navUnit.page = Number.parseInt(navUnit.label, 10)
               assert(
                 !Number.isNaN(navUnit.page),
@@ -226,7 +226,13 @@ async function main() {
           // console.warn('toc', toc)
         }
       }
-    } catch {}
+    } catch (err: any) {
+      console.warn(
+        'error handling response',
+        response.url(),
+        err?.message ?? err
+      )
+    }
   })
 
   // Only used for the 'blob' render method
@@ -456,7 +462,8 @@ async function main() {
     let resultPage = 1
 
     // TODO: this is O(n) but we can do better
-    for (const { startPosition, page } of result.locationMap.navigationUnit) {
+    for (const { startPosition, page } of result.locationMap.navigationUnit ??
+      []) {
       if (startPosition > position) break
 
       resultPage = page
@@ -512,9 +519,17 @@ async function main() {
   // At this point, we should have recorded all the base book metadata from the
   // initial network requests.
   assert(result.info, 'expected book info to be initialized')
-  assert(result.meta, 'expected book meta to be initialized')
+  assert(
+    result.meta,
+    'expected book meta to be initialized (no YJmetadata.jsonp and no renderer metadata was captured -- check the response warnings above)'
+  )
   assert(result.toc?.length, 'expected book toc to be initialized')
   assert(result.locationMap, 'expected book location map to be initialized')
+
+  assert(
+    result.locationMap.navigationUnit?.length,
+    `"${result.meta.title}" has no page-number mapping: Amazon returned a location map with no navigationUnit, which means this title has no print-edition pagination. Exporting it would need position-based extraction, which isn't supported yet.`
+  )
 
   result.nav.startContentPosition = result.meta.startPosition
   result.nav.totalNumPages = result.locationMap.navigationUnit.reduce(

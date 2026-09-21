@@ -216,7 +216,10 @@ export async function tryReadJsonFile<T = unknown>(
   filePath: string
 ): Promise<T | undefined> {
   try {
-    return readJsonFile(filePath)
+    // `await` matters: returning the promise from inside the `try` leaves
+    // the rejection uncaught, so a missing file threw instead of yielding
+    // undefined.
+    return await readJsonFile(filePath)
   } catch {}
 }
 

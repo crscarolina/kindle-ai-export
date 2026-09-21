@@ -125,7 +125,8 @@ export interface AmazonRenderMetadata {
 
 export interface AmazonRenderLocationMap {
   locations: number[]
-  navigationUnit: Array<{
+  /** Absent for books with no print-edition pagination. */
+  navigationUnit?: Array<{
     startPosition: number
     page: number // derived
     label: string
