@@ -8,6 +8,7 @@ import PDFDocument from 'pdfkit'
 
 import type { BookMetadata, ContentChunk } from './types'
 import { parseCliArgs } from './lib/cli'
+import { resolveContentPath } from './lib/content'
 import { createReporter } from './lib/events'
 import { assert } from './utils'
 
@@ -22,7 +23,7 @@ async function main() {
   await fsp.mkdir(path.dirname(outFile), { recursive: true })
 
   const content = JSON.parse(
-    await fsp.readFile(path.join(outDir, 'content.json'), 'utf8')
+    await fsp.readFile(await resolveContentPath(outDir), 'utf8')
   ) as ContentChunk[]
   const metadata = JSON.parse(
     await fsp.readFile(path.join(outDir, 'metadata.json'), 'utf8')
