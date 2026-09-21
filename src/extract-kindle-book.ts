@@ -20,6 +20,9 @@ import type {
   BookMetadata,
   TocItem
 } from './types'
+import { parseCliArgs } from './lib/cli'
+import { createReporter } from './lib/events'
+import { planExtractionResume, scanCompletedPages } from './lib/resume'
 import { parsePageNav, parseTocItems } from './playwright-utils'
 import {
   assert,
@@ -46,16 +49,20 @@ type RENDER_METHOD = 'screenshot' | 'blob'
 const renderMethod: RENDER_METHOD = 'blob'
 
 async function main() {
-  const asin = getEnv('ASIN')
+  // eslint-disable-next-line no-process-env
+  const opts = parseCliArgs(process.argv.slice(2), process.env)
+  const reporter = createReporter({ json: opts.json })
+  reporter.emit({ event: 'step-start', step: 'extract' })
+
+  const asin = opts.asin
   const amazonEmail = getEnv('AMAZON_EMAIL')
   const amazonPassword = getEnv('AMAZON_PASSWORD')
-  assert(asin, 'ASIN is required')
   assert(amazonEmail, 'AMAZON_EMAIL is required')
   assert(amazonPassword, 'AMAZON_PASSWORD is required')
   const asinL = asin.toLowerCase()
 
-  const outDir = path.join('out', asin)
-  const userDataDir = path.join(outDir, 'data')
+  const outDir = opts.bookDir
+  const userDataDir = opts.userDataDir
   const pageScreenshotsDir = path.join(outDir, 'pages')
   const metadataPath = path.join(outDir, 'metadata.json')
   await fs.mkdir(userDataDir, { recursive: true })
@@ -289,6 +296,13 @@ async function main() {
     await page.locator('input[type="submit"]').first().click()
 
     if (!/\/kindle-library/g.test(new URL(page.url()).pathname)) {
+      if (opts.json) {
+        reporter.emit({ event: 'session-expired' })
+        throw new Error(
+          'Amazon session expired; sign in again from the app settings'
+        )
+      }
+
       const code = await input({
         message: '2-factor auth code?'
       })
@@ -529,10 +543,43 @@ async function main() {
   assert(result.nav.totalNumContentPages > 0, 'No content pages found')
   const pageNumberPaddingAmount = `${result.nav.totalNumContentPages * 2}`
     .length
+  const screenshotName = (index: number, page: number) =>
+    `${index}`.padStart(pageNumberPaddingAmount, '0') +
+    '-' +
+    `${page}`.padStart(pageNumberPaddingAmount, '0') +
+    '.png'
   await writeResultMetadata()
 
+  // Pick up an interrupted run rather than re-screenshotting the whole book.
+  const resumePlan = opts.force
+    ? { resumePage: undefined, keep: [] }
+    : planExtractionResume(
+        scanCompletedPages(await fs.readdir(pageScreenshotsDir).catch(() => []))
+      )
+
+  if (resumePlan.keep.length) {
+    const previousPages = new Map(
+      ((await tryReadJsonFile<BookMetadata>(metadataPath))?.pages ?? []).map(
+        (pageChunk) => [pageChunk.index, pageChunk]
+      )
+    )
+
+    result.pages = resumePlan.keep.map(
+      ({ index, page }) =>
+        previousPages.get(index) ?? {
+          index,
+          page,
+          screenshot: path.join(pageScreenshotsDir, screenshotName(index, page))
+        }
+    )
+
+    reporter.log(
+      `resuming from page ${resumePlan.resumePage} (${result.pages.length} pages already captured)`
+    )
+  }
+
   // Navigate to the first content page of the book
-  await goToPage(result.nav.startContentPage)
+  await goToPage(resumePlan.resumePage ?? result.nav.startContentPage)
 
   let done = false
   console.warn(
@@ -548,6 +595,10 @@ async function main() {
     }
 
     if (pageNav.page > result.nav.totalNumContentPages) {
+      break
+    }
+
+    if (opts.limit !== undefined && result.pages.length >= opts.limit) {
       break
     }
 
@@ -607,10 +658,7 @@ async function main() {
 
     const screenshotPath = path.join(
       pageScreenshotsDir,
-      `${index}`.padStart(pageNumberPaddingAmount, '0') +
-        '-' +
-        `${pageNav.page}`.padStart(pageNumberPaddingAmount, '0') +
-        '.png'
+      screenshotName(index, pageNav.page)
     )
 
     await fs.writeFile(screenshotPath, renderedPageImageBuffer)
@@ -620,7 +668,12 @@ async function main() {
       screenshot: screenshotPath
     }
     result.pages.push(pageChunk)
-    console.warn(pageChunk)
+    reporter.emit({
+      event: 'page',
+      index,
+      page: pageNav.page,
+      total: opts.limit ?? result.nav.totalNumContentPages
+    })
     await writeResultMetadata()
 
     let retries = 0
@@ -675,8 +728,8 @@ async function main() {
   } while (!done)
 
   await writeResultMetadata()
-  console.log()
-  console.log(metadataPath)
+  reporter.emit({ event: 'step-done', step: 'extract' })
+  reporter.emit({ event: 'done', outFile: metadataPath })
 
   if (initialPageNav?.page !== undefined) {
     console.warn(`resetting back to initial page ${initialPageNav.page}...`)

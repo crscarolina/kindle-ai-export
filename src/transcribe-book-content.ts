@@ -4,14 +4,18 @@ import { spawn } from 'node:child_process'
 import { once } from 'node:events'
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import pMap from 'p-map'
 
 import type { BookMetadata, ContentChunk, TocItem } from './types'
-import { assert, fileExists, getEnv, readJsonFile } from './utils'
+import { parseCliArgs } from './lib/cli'
+import { createReporter } from './lib/events'
+import { assert, fileExists, readJsonFile } from './utils'
 
-const ocrSourcePath = path.join('src', 'ocr-macos.swift')
-const ocrBinaryPath = path.join('out', '.bin', 'ocr-macos')
+const srcDir = path.dirname(fileURLToPath(import.meta.url))
+const ocrSourcePath = path.join(srcDir, 'ocr-macos.swift')
+const ocrBinaryPath = path.join(srcDir, '..', 'out', '.bin', 'ocr-macos')
 
 // macOS ships a system word list which we use to repair chapter drop caps
 const systemWordsPath = '/usr/share/dict/words'
@@ -153,10 +157,12 @@ function fixDropCap(text: string, words: Set<string> | undefined): string {
 }
 
 async function main() {
-  const asin = getEnv('ASIN')
-  assert(asin, 'ASIN is required')
+  // eslint-disable-next-line no-process-env
+  const opts = parseCliArgs(process.argv.slice(2), process.env)
+  const reporter = createReporter({ json: opts.json })
+  reporter.emit({ event: 'step-start', step: 'transcribe' })
 
-  const outDir = path.join('out', asin)
+  const outDir = opts.bookDir
   const metadata = await readJsonFile<BookMetadata>(
     path.join(outDir, 'metadata.json')
   )
@@ -182,14 +188,21 @@ async function main() {
       )
     : undefined
 
+  const pages = opts.limit
+    ? metadata.pages.slice(0, opts.limit)
+    : metadata.pages
+
   const content: ContentChunk[] = (
     await pMap(
-      metadata.pages,
+      pages,
       async (pageChunk, pageChunkIndex) => {
         const { screenshot, index, page } = pageChunk
 
         try {
-          const rawText = await ocrImage(ocrBinary, screenshot)
+          const screenshotPath = (await fileExists(screenshot))
+            ? screenshot
+            : path.join(outDir, 'pages', path.basename(screenshot))
+          const rawText = await ocrImage(ocrBinary, screenshotPath)
 
           let text = fixMissingSentenceSpaces(
             fixMisreadCapitalI(fixDropCap(rawText, words))
@@ -228,7 +241,12 @@ async function main() {
             text,
             screenshot
           }
-          console.log(result)
+          reporter.emit({
+            event: 'page',
+            index,
+            page,
+            total: pages.length
+          })
 
           return result
         } catch (err) {
@@ -239,11 +257,12 @@ async function main() {
     )
   ).filter(Boolean)
 
-  await fs.writeFile(
-    path.join(outDir, 'content.json'),
-    JSON.stringify(content, null, 2)
-  )
-  console.log(JSON.stringify(content, null, 2))
+  const outFile = opts.outFile ?? path.join(outDir, 'content.json')
+  await fs.mkdir(path.dirname(outFile), { recursive: true })
+  await fs.writeFile(outFile, JSON.stringify(content, null, 2))
+
+  reporter.emit({ event: 'step-done', step: 'transcribe' })
+  reporter.emit({ event: 'done', outFile })
 }
 
 await main()

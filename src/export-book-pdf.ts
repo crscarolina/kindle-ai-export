@@ -7,13 +7,19 @@ import path from 'node:path'
 import PDFDocument from 'pdfkit'
 
 import type { BookMetadata, ContentChunk } from './types'
-import { assert, getEnv } from './utils'
+import { parseCliArgs } from './lib/cli'
+import { createReporter } from './lib/events'
+import { assert } from './utils'
 
 async function main() {
-  const asin = getEnv('ASIN')
-  assert(asin, 'ASIN is required')
+  // eslint-disable-next-line no-process-env
+  const opts = parseCliArgs(process.argv.slice(2), process.env)
+  const reporter = createReporter({ json: opts.json })
+  reporter.emit({ event: 'step-start', step: 'pdf' })
 
-  const outDir = path.join('out', asin)
+  const outDir = opts.bookDir
+  const outFile = opts.outFile ?? path.join(outDir, 'book.pdf')
+  await fsp.mkdir(path.dirname(outFile), { recursive: true })
 
   const content = JSON.parse(
     await fsp.readFile(path.join(outDir, 'content.json'), 'utf8')
@@ -36,7 +42,7 @@ async function main() {
       Author: authors.join(', ')
     }
   })
-  const stream = doc.pipe(fs.createWriteStream(path.join(outDir, 'book.pdf')))
+  const stream = doc.pipe(fs.createWriteStream(outFile))
 
   const fontSize = 12
 
@@ -105,6 +111,9 @@ async function main() {
     stream.on('finish', resolve)
     stream.on('error', reject)
   })
+
+  reporter.emit({ event: 'step-done', step: 'pdf' })
+  reporter.emit({ event: 'done', outFile })
 }
 
 await main()
