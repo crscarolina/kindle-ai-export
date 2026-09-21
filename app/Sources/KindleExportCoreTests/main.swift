@@ -132,6 +132,13 @@ t.expectEqual(
 t.expectEqual(
   ExportCommand(step: .markdown, asin: "A", workDir: "/w", userDataDir: "/s").scriptPath,
   "src/export-book-markdown.ts", "maps markdown to its script")
+t.expectEqual(
+  ExportCommand(step: .clean, asin: "A", workDir: "/w", userDataDir: "/s").scriptPath,
+  "src/clean-transcription.ts", "maps cleanup to its script")
+// Narration goes through the local Kokoro script, not the cloud TTS one.
+t.expectEqual(
+  ExportCommand(step: .audio, asin: "A", workDir: "/w", userDataDir: "/s").scriptPath,
+  "src/narrate-book.ts", "maps audio to the local narration script")
 
 t.expectEqual(
   base.arguments,

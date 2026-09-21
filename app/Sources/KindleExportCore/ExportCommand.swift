@@ -40,7 +40,7 @@ public struct ExportCommand: Equatable, Sendable {
     case .clean: "src/clean-transcription.ts"
     case .markdown: "src/export-book-markdown.ts"
     case .pdf: "src/export-book-pdf.ts"
-    case .audio: "src/export-book-audio.ts"
+    case .audio: "src/narrate-book.ts"
     }
   }
 
