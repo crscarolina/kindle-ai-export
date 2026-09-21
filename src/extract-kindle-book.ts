@@ -12,7 +12,9 @@ import { chromium } from 'patchright'
 import sharp from 'sharp'
 
 import type {
+  AmazonBookMeta,
   AmazonRenderLocationMap,
+  AmazonRenderMetadata,
   AmazonRenderToc,
   AmazonRenderTocItem,
   BookMetadata,
@@ -26,6 +28,7 @@ import {
   hashObject,
   normalizeAuthors,
   normalizeBookMetadata,
+  parseInlineStartReadingResponse,
   parseJsonpResponse,
   tryReadJsonFile
 } from './utils'
@@ -75,6 +78,10 @@ async function main() {
       totalNumContentPages: -1
     }
   }
+
+  // Fallback source for book meta, since Kindle's reader no longer fetches
+  // `YJmetadata.jsonp`
+  let renderMetadata: AmazonRenderMetadata | undefined
 
   const deviceScaleFactor = 2
   const context = await chromium.launchPersistentContext(userDataDir, {
@@ -183,10 +190,11 @@ async function main() {
             }
           }
 
-          const metadata = await tryReadJsonFile<any>(
+          const metadata = await tryReadJsonFile<AmazonRenderMetadata>(
             path.join(renderDir, 'metadata.json')
           )
           if (metadata) {
+            renderMetadata = metadata
             result.nav.startPosition = metadata.firstPositionId
             result.nav.endPosition = metadata.lastPositionId
           }
@@ -278,7 +286,7 @@ async function main() {
 
     await page.locator('input[type="password"]').fill(amazonPassword)
     // await page.locator('input[type="checkbox"]').click()
-    await page.locator('input[type="submit"]').click()
+    await page.locator('input[type="submit"]').first().click()
 
     if (!/\/kindle-library/g.test(new URL(page.url()).pathname)) {
       const code = await input({
@@ -375,6 +383,27 @@ async function main() {
     }
   }
 
+  async function getLibraryAuthors(): Promise<string[]> {
+    try {
+      const rawAuthors: string[] | undefined = await page.evaluate(
+        async (asin) => {
+          const res = await fetch(
+            `/kindle-library/search?query=${asin}&libraryType=BOOKS&sortType=recency&querySize=5`,
+            { credentials: 'include' }
+          )
+          const body: any = await res.json()
+          return body.itemsList?.find((item: any) => item.asin === asin)
+            ?.authors
+        },
+        asin
+      )
+      return normalizeAuthors(rawAuthors ?? [])
+    } catch (err: any) {
+      console.warn('unable to fetch book authors from library', err.message)
+      return []
+    }
+  }
+
   async function writeResultMetadata() {
     return fs.writeFile(
       metadataPath,
@@ -437,6 +466,34 @@ async function main() {
 
   // Record the initial page navigation so we can reset back to it later
   const initialPageNav = await getPageNav()
+
+  if (!result.info) {
+    // Kindle's reader now inlines the `startReading` response into the page
+    // instead of fetching it. (We read it from the DOM because patchright's
+    // document interception hides the reader page's response from us.)
+    const body = parseInlineStartReadingResponse<any>(await page.content())
+    if (body) {
+      delete body.renderingInfo
+      console.warn('book info', body)
+      result.info = body
+    }
+  }
+
+  if (!result.meta && renderMetadata) {
+    // Kindle's reader no longer fetches `YJmetadata.jsonp`, so fall back to
+    // the renderer's metadata plus the author list from the library search.
+    console.warn('book meta not found; falling back to renderer metadata')
+    result.meta = {
+      asin,
+      title: renderMetadata.bookTitle,
+      authorList: await getLibraryAuthors(),
+      language: renderMetadata.lang,
+      version: result.info?.contentVersion,
+      startPosition: renderMetadata.firstPositionId,
+      endPosition: renderMetadata.lastPositionId
+    } as AmazonBookMeta
+    console.warn('book meta', result.meta)
+  }
 
   // At this point, we should have recorded all the base book metadata from the
   // initial network requests.

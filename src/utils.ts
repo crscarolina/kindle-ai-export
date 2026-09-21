@@ -66,6 +66,49 @@ export function parseJsonpResponse<T = unknown>(body: string): T | undefined {
     return
   }
 }
+
+const START_READING_RESPONSE_REGEX =
+  /var\s+startReadingResponse\s*=\s*JSON\.parse\('((?:[^'\\]|\\.)*)'\)/
+
+const JS_SIMPLE_ESCAPES: Record<string, string> = {
+  n: '\n',
+  r: '\r',
+  t: '\t',
+  b: '\b',
+  f: '\f',
+  v: '\v',
+  0: '\0'
+}
+
+/**
+ * Kindle's web reader no longer fetches `startReading` over the network;
+ * instead, the response is inlined into the reader HTML as a single-quoted JS
+ * string literal passed to `JSON.parse`.
+ */
+export function parseInlineStartReadingResponse<T = unknown>(
+  html: string
+): T | undefined {
+  const literal = html?.match(START_READING_RESPONSE_REGEX)?.[1]
+  if (!literal) {
+    return
+  }
+
+  // Unescape the JS string literal (hex, unicode, and single-char escapes)
+  const content = literal.replaceAll(
+    /\\(x[\da-f]{2}|u[\da-f]{4}|[\s\S])/gi,
+    (_, esc: string) =>
+      esc.length > 1
+        ? String.fromCodePoint(Number.parseInt(esc.slice(1), 16))
+        : (JS_SIMPLE_ESCAPES[esc] ?? esc)
+  )
+
+  try {
+    return JSON.parse(content) as T
+  } catch {
+    return
+  }
+}
+
 const numerals = { I: 1, V: 5, X: 10, L: 50, C: 100, D: 500, M: 1000 }
 
 export function deromanize(romanNumeral: string): number {
