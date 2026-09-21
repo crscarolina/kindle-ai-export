@@ -16,6 +16,7 @@
 - [Usage](#usage)
   - [Setup Env Vars](#setup-env-vars)
   - [Extract Kindle Book](#extract-kindle-book)
+  - [Books Without Page Numbers](#books-without-page-numbers)
   - [Transcribe Book Content](#transcribe-book-content)
   - [(Optional) Export Book as PDF](#optional-export-book-as-pdf)
   - [(Optional) Export Book as EPUB](#optional-export-book-as-epub)
@@ -243,6 +244,29 @@ npx tsx src/extract-kindle-book.ts
 
 > [!NOTE]
 > I'm pretty sure Kindle's web reader uses WebGL at least in part to render the page contents, because the content pages failed to generate when running this on a VM ([Browserbase](https://www.browserbase.com)). So if you're getting blank or invalid page screenshots, that may be the reason.
+
+### Books Without Page Numbers
+
+Not every Kindle title has print-edition pagination. Amazon gives those books
+Kindle *locations* instead and omits the page mapping entirely -- public-domain
+reissues and many indie titles, in practice.
+
+Both are handled: the extractor indexes a book by whichever unit it actually
+has, records which in `nav.unit`, and names page screenshots accordingly. The
+rest of the pipeline is unchanged, since `ContentChunk.page` carries the
+book's own numbering either way.
+
+To see how your library breaks down:
+
+```sh
+npx tsx src/check-pagination.ts
+npx tsx src/check-pagination.ts --asin B0819W19WD   # or just one book
+```
+
+This has to open each book in the reader, because the page mapping only
+arrives with the renderer's location map -- the library listing doesn't carry
+it. Note that opening books updates their recently-accessed order in your
+Kindle library.
 
 ### Transcribe Book Content
 

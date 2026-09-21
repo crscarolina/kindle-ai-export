@@ -18,9 +18,15 @@ export function countNavigationUnits(locationMap: unknown): number | null {
   return Array.isArray(navigationUnit) ? navigationUnit.length : 0
 }
 
-/** Render a page count for a human. */
+/**
+ * Describe how a book is indexed.
+ *
+ * Books with no print pagination are exported by Kindle location, so this
+ * says which index a title uses rather than whether it can be exported.
+ * `null` means the location map never arrived -- a timeout, not a verdict.
+ */
 export function describePagination(pages: number | null): string {
-  if (pages === null) return 'unknown'
-  if (pages === 0) return 'no page numbers'
+  if (pages === null) return 'timed out'
+  if (pages === 0) return 'by location'
   return `${pages} page${pages === 1 ? '' : 's'}`
 }

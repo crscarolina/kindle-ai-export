@@ -215,3 +215,40 @@ describe('parseLibraryCliArgs', () => {
     expect(() => parseLibraryCliArgs([], {})).toThrow(/--user-data-dir/)
   })
 })
+
+describe('parseLibraryCliArgs asin filter', () => {
+  const env = { HOME: '/Users/reader' }
+
+  test('has no filter by default', () => {
+    expect(parseLibraryCliArgs([], env).asins).toBeUndefined()
+  })
+
+  test('accepts a single asin', () => {
+    expect(parseLibraryCliArgs(['--asin', asin], env).asins).toEqual([asin])
+  })
+
+  test('accepts a comma-separated list', () => {
+    expect(
+      parseLibraryCliArgs(['--asin', `${asin},B00KUQIU7O`], env).asins
+    ).toEqual([asin, 'B00KUQIU7O'])
+  })
+
+  test('accepts a Kindle URL', () => {
+    expect(
+      parseLibraryCliArgs(
+        ['--asin', `https://read.amazon.com/?asin=${asin}`],
+        env
+      ).asins
+    ).toEqual([asin])
+  })
+
+  test('ignores empty entries', () => {
+    expect(parseLibraryCliArgs(['--asin', `${asin},,`], env).asins).toEqual([
+      asin
+    ])
+  })
+
+  test('rejects an unparseable asin rather than silently filtering to nothing', () => {
+    expect(() => parseLibraryCliArgs(['--asin', 'nope'], env)).toThrow(/asin/i)
+  })
+})

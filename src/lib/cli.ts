@@ -13,6 +13,8 @@ export type LibraryCliOptions = {
   json: boolean
   /** Return at most this many books. */
   limit: number | undefined
+  /** Restrict to these books, rather than the whole library. */
+  asins: string[] | undefined
 }
 
 /** Fully resolved options for a pipeline script. */
@@ -101,8 +103,34 @@ export function parseLibraryCliArgs(
     userDataDir: explicitProfile ?? sessionDir(env.HOME!),
     outFile: value('--out-file'),
     json: flags.get('--json') === true,
-    limit: parseLimit(value('--limit'))
+    limit: parseLimit(value('--limit')),
+    asins: parseAsinList(value('--asin'))
   }
+}
+
+/**
+ * Parse a comma-separated book filter.
+ *
+ * An unparseable entry throws rather than being dropped: silently filtering
+ * down to nothing would look like "this book has no pagination" instead of
+ * "you typed the id wrong".
+ */
+function parseAsinList(raw: string | undefined): string[] | undefined {
+  if (raw === undefined) {
+    return
+  }
+
+  return raw
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .map((entry) => {
+      const asin = parseAsin(entry)
+      if (!asin) {
+        throw new Error(`Invalid ASIN: ${entry}`)
+      }
+      return asin
+    })
 }
 
 function parseLimit(raw: string | undefined): number | undefined {

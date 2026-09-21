@@ -38,12 +38,13 @@ describe('describePagination', () => {
     expect(describePagination(664)).toBe('664 pages')
   })
 
-  test('describes an unpaginated book', () => {
-    expect(describePagination(0)).toBe('no page numbers')
+  test('describes a book indexed by location', () => {
+    // Exportable, just numbered differently -- not a dead end.
+    expect(describePagination(0)).toBe('by location')
   })
 
-  test('describes an unknown result', () => {
-    expect(describePagination(null)).toBe('unknown')
+  test('distinguishes a timeout from a verdict', () => {
+    expect(describePagination(null)).toBe('timed out')
   })
 
   test('uses the singular for one page', () => {
