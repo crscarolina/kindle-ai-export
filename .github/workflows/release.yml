@@ -1,0 +1,135 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build, e.g. v0.2.0"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    # Two assets rather than one universal build. The Swift binary could be
+    # universal, but the bundled node_modules cannot: onnxruntime-node and
+    # sharp's libvips ship per-architecture native binaries, so an arm64
+    # bundle will not run on an Intel Mac whatever the Swift side does.
+    name: ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-13
+            arch: x86_64
+          - runner: macos-14
+            arch: arm64
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: "pnpm"
+
+      - name: Work out the version
+        id: version
+        run: |
+          VERSION="${{ github.event.inputs.version || github.ref_name }}"
+          echo "version=${VERSION#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Install the pipeline
+        # Production dependencies only: the bundle ships these, and the dev
+        # tooling would add hundreds of megabytes nobody runs.
+        run: pnpm install --prod --frozen-lockfile
+
+      - name: Check the architecture is what we think
+        run: |
+          uname -m
+          test "$(uname -m)" = "${{ matrix.arch }}"
+
+      - name: Build the app
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: ./build-app.sh release
+        working-directory: app
+
+      - name: Check the bundle
+        run: |
+          APP=app/build/KindleExport.app
+          test -x "$APP/Contents/MacOS/KindleExport"
+          test -f "$APP/Contents/Resources/AppIcon.icns"
+          test -f "$APP/Contents/Resources/repo/node_modules/tsx/dist/cli.mjs"
+          plutil -lint "$APP/Contents/Info.plist"
+          # The binary must match the runner, or the wrong asset ships.
+          file "$APP/Contents/MacOS/KindleExport" | grep -q "${{ matrix.arch }}"
+
+      - name: Package
+        id: package
+        run: |
+          NAME="KindleExport-${{ steps.version.outputs.version }}-${{ matrix.arch }}.zip"
+          # ditto rather than zip: it preserves the bundle's symlinks and
+          # resource forks, which a plain zip mangles.
+          ditto -c -k --sequesterRsrc --keepParent \
+            app/build/KindleExport.app "$NAME"
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "size=$(du -h "$NAME" | cut -f1)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.arch }}
+          path: ${{ steps.package.outputs.name }}
+
+  release:
+    name: Publish
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.inputs.version || github.ref_name }}
+        run: |
+          # The app is ad-hoc signed, so Gatekeeper quarantines it on
+          # download. Saying so here is kinder than letting people meet
+          # "damaged and can't be opened" with no explanation.
+          gh release create "$TAG" \
+            --repo "${{ github.repository }}" \
+            --title "$TAG" \
+            --generate-notes \
+            --notes "
+          ## Downloads
+
+          Pick the build matching your Mac — \`uname -m\` tells you which.
+
+          | Mac | Asset |
+          | --- | --- |
+          | Apple Silicon | \`*-arm64.zip\` |
+          | Intel | \`*-x86_64.zip\` |
+
+          These are separate builds rather than one universal app: the bundled
+          pipeline includes per-architecture native binaries.
+
+          ## First run
+
+          The app is signed ad-hoc, not with an Apple Developer certificate, so
+          macOS will refuse to open it until you clear the download quarantine:
+
+          \`\`\`sh
+          xattr -dr com.apple.quarantine /Applications/KindleExport.app
+          \`\`\`
+
+          You will also need Google Chrome, the \`claude\` CLI signed in, and
+          \`ffmpeg\` for audiobooks. See the readme." \
+            *.zip

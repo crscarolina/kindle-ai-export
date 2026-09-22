@@ -21,7 +21,26 @@ public struct ToolchainConfig: Sendable {
     "/usr/bin/node",
   ]
 
+  /// Node shipped inside the app, if this is a release build.
+  ///
+  /// Preferred over anything on PATH: a downloaded app should not depend on
+  /// the user having installed a compatible Node, and if they have an old one
+  /// first on PATH it would be used instead of the version this was built
+  /// against.
+  public static func bundledNode() -> URL? {
+    guard let resources = Bundle.main.resourceURL else { return nil }
+    let node = resources.appending(path: "bin/node")
+    return FileManager.default.isExecutableFile(
+      atPath: node.path(percentEncoded: false))
+      ? node
+      : nil
+  }
+
   public static func locateNode() -> URL? {
+    if let bundled = bundledNode() {
+      return bundled
+    }
+
     let fm = FileManager.default
 
     if let path = ProcessInfo.processInfo.environment["PATH"] {

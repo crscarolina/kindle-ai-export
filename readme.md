@@ -71,15 +71,29 @@ went in.
 
 ## Requirements
 
+Whether you download a release or build it yourself:
+
 - **macOS 14 or later**
 - **Google Chrome** — the extractor drives your installed copy
-- **Node 20+** and [pnpm](https://pnpm.io)
 - **[Claude Code](https://claude.com/claude-code)**, signed in, for the cleanup
   step
 - **ffmpeg** (`brew install ffmpeg`) for audiobooks
 - An Amazon account with books in it
 
-Xcode is *not* required. The app builds with the Command Line Tools.
+A released build ships its own Node, so you do not need one installed.
+**Building from source** additionally needs **Node 20+** and
+[pnpm](https://pnpm.io). Xcode is *not* required either way — the app builds
+with the Command Line Tools.
+
+### Downloading a release
+
+Releases carry two builds, one per architecture; `uname -m` says which you
+need. They are signed ad-hoc rather than with an Apple Developer certificate,
+so macOS quarantines them on download:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/KindleExport.app
+```
 
 ## Getting started
 
