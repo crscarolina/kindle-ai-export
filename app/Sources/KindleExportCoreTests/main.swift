@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import KindleExportCore
 
@@ -952,5 +953,169 @@ t.expectEqual(
 
 t.expectEqual(SetupStep.allCases.count, 3, "three steps, as designed")
 t.expect(SetupStep.requirements < SetupStep.account, "steps are ordered")
+
+// MARK: - Voice previews
+
+// The checksum lands in a later commit than the code that uses it, so an
+// unpublished release must refuse rather than fetch something it cannot vouch
+// for.
+t.expect(
+  !PreviewRelease(url: URL(string: "https://example.com/a.zip")!, sha256: "",
+    clipCount: 224).isPublished,
+  "a release with no checksum is not published")
+t.expect(
+  PreviewRelease(url: URL(string: "https://example.com/a.zip")!,
+    sha256: "abc123", clipCount: 224).isPublished,
+  "a release with a checksum is published")
+
+let previewTmp = FileManager.default.temporaryDirectory
+  .appending(path: "preview-install-\(UUID().uuidString)")
+try? FileManager.default.createDirectory(
+  at: previewTmp, withIntermediateDirectories: true)
+
+let smallRelease = PreviewRelease(
+  url: URL(string: "https://example.com/a.zip")!, sha256: "abc", clipCount: 3)
+let installer = PreviewInstaller(release: smallRelease)
+
+t.expectEqual(
+  installer.installedCount(in: previewTmp.path(percentEncoded: false)), 0,
+  "an empty directory holds no clips")
+t.expect(
+  !installer.isInstalled(in: previewTmp.path(percentEncoded: false)),
+  "and does not count as installed")
+t.expect(
+  !installer.isInstalled(in: previewTmp.path(percentEncoded: false) + "/nope"),
+  "nor does a directory that does not exist")
+
+for name in ["af_heart.m4b", "af_heart@0.8x.m4b"] {
+  FileManager.default.createFile(
+    atPath: previewTmp.appending(path: name).path(percentEncoded: false),
+    contents: Data("x".utf8))
+}
+FileManager.default.createFile(
+  atPath: previewTmp.appending(path: "voices.json").path(percentEncoded: false),
+  contents: Data("[]".utf8))
+
+t.expectEqual(
+  installer.installedCount(in: previewTmp.path(percentEncoded: false)), 2,
+  "only clips are counted, not the manifest beside them")
+
+// A half-extracted set must not read as installed: the picker would silently
+// be short most of its voices.
+t.expect(
+  !installer.isInstalled(in: previewTmp.path(percentEncoded: false)),
+  "a partial set is not installed")
+
+FileManager.default.createFile(
+  atPath: previewTmp.appending(path: "af_bella.m4b").path(percentEncoded: false),
+  contents: Data("x".utf8))
+t.expect(
+  installer.isInstalled(in: previewTmp.path(percentEncoded: false)),
+  "the full count is installed")
+
+try? FileManager.default.removeItem(at: previewTmp)
+
+t.expectEqual(
+  PreviewInstallProgress(received: 50, expected: 200).fraction, 0.25,
+  "progress is a fraction of the expected size")
+t.expect(
+  PreviewInstallProgress(received: 50, expected: 0).fraction == nil,
+  "an unknown total reports no fraction, rather than a misleading zero")
+t.expectEqual(
+  PreviewInstallProgress(received: 300, expected: 200).fraction, 1,
+  "a server that undercounts cannot push the bar past full")
+
+// The whole install path -- download, checksum, ditto extraction, and the
+// move into place -- over a file:// URL, which exercises everything except
+// the network itself.
+@MainActor
+func runPreviewInstall() async {
+  let fm = FileManager.default
+  let root = fm.temporaryDirectory.appending(path: "preview-e2e-\(UUID().uuidString)")
+  let source = root.appending(path: "voice-previews")
+  let target = root.appending(path: "installed/previews")
+  try? fm.createDirectory(at: source, withIntermediateDirectories: true)
+
+  let names = ["af_heart.m4b", "af_heart@0.8x.m4b", "bm_george@1.25x.m4b"]
+  for name in names {
+    fm.createFile(
+      atPath: source.appending(path: name).path(percentEncoded: false),
+      contents: Data("clip \(name)".utf8))
+  }
+
+  // Exactly how publish-previews.sh packages them: a top-level folder inside
+  // the archive, which the installer has to see through.
+  let archive = root.appending(path: "voice-previews.zip")
+  let ditto = Process()
+  ditto.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
+  ditto.arguments = [
+    "-c", "-k", "--sequesterRsrc", "--keepParent",
+    source.path(percentEncoded: false), archive.path(percentEncoded: false),
+  ]
+  try? ditto.run()
+  ditto.waitUntilExit()
+
+  guard let data = fm.contents(atPath: archive.path(percentEncoded: false)) else {
+    t.expect(false, "packaging the test archive worked")
+    return
+  }
+  let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+
+  // A clip already sitting in the destination must survive the install.
+  try? fm.createDirectory(at: target, withIntermediateDirectories: true)
+  fm.createFile(
+    atPath: target.appending(path: "af_mine.m4b").path(percentEncoded: false),
+    contents: Data("local".utf8))
+
+  let release = PreviewRelease(url: archive, sha256: digest, clipCount: 3)
+  let installer = PreviewInstaller(release: release)
+
+  do {
+    try await installer.install(into: target.path(percentEncoded: false)) { _ in }
+  } catch {
+    t.expect(false, "installing from a file URL succeeds (got \(error))")
+    try? fm.removeItem(at: root)
+    return
+  }
+
+  for name in names {
+    t.expect(
+      fm.fileExists(atPath: target.appending(path: name).path(percentEncoded: false)),
+      "\(name) was unpacked into place")
+  }
+  t.expect(
+    fm.fileExists(
+      atPath: target.appending(path: "af_mine.m4b").path(percentEncoded: false)),
+    "a locally rendered clip is not swept away by the download")
+  t.expect(
+    !fm.fileExists(
+      atPath: root.appending(path: "installed/.previews-incoming")
+        .path(percentEncoded: false)),
+    "the staging directory is cleaned up")
+
+  // A corrupted download must be refused, not unpacked.
+  let wrong = PreviewRelease(url: archive, sha256: String(repeating: "0", count: 64), clipCount: 3)
+  do {
+    try await PreviewInstaller(release: wrong)
+      .install(into: target.path(percentEncoded: false)) { _ in }
+    t.expect(false, "a bad checksum is rejected")
+  } catch {
+    t.expect(true, "a bad checksum is rejected")
+  }
+
+  // And an unpublished one must not reach the network at all.
+  let unpublished = PreviewRelease(url: archive, sha256: "", clipCount: 3)
+  do {
+    try await PreviewInstaller(release: unpublished)
+      .install(into: target.path(percentEncoded: false)) { _ in }
+    t.expect(false, "an unpublished release refuses to install")
+  } catch {
+    t.expect(true, "an unpublished release refuses to install")
+  }
+
+  try? fm.removeItem(at: root)
+}
+
+await runPreviewInstall()
 
 t.finish(suite: "KindleExportCore")
