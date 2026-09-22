@@ -138,6 +138,25 @@ struct VoicePicker: View {
                 systemImage: player.playingVoiceId == voice.id
                   ? "stop.fill" : "play.fill")
             }
+          } else if let progress = model.previewDownload {
+            HStack(spacing: 6) {
+              if let fraction = progress.fraction {
+                ProgressView(value: fraction)
+                  .frame(width: 90)
+                Text(downloaded(progress))
+                  .font(.caption.monospacedDigit())
+                  .foregroundStyle(.secondary)
+              } else {
+                ProgressView().controlSize(.small)
+                Text("Starting…").font(.caption).foregroundStyle(.secondary)
+              }
+            }
+          } else if model.canDownloadPreviews {
+            Button("Download Previews") {
+              Task { await model.downloadPreviews() }
+            }
+            .help(
+              "Fetches audition clips for all 28 voices at every pace, about 271 MB, once.")
           } else {
             Text("No preview rendered")
               .font(.caption)
@@ -145,6 +164,13 @@ struct VoicePicker: View {
               .help(
                 "Run src/render-voice-previews.ts to generate audition clips.")
           }
+        }
+
+        if let failure = model.previewDownloadError {
+          Text(failure)
+            .font(.caption)
+            .foregroundStyle(.orange)
+            .fixedSize(horizontal: false, vertical: true)
         }
 
         if model.selectedVoicePreview != nil, !model.previewMatchesPace {
@@ -157,6 +183,14 @@ struct VoicePicker: View {
       }
       .padding(.vertical, 2)
     }
+  }
+
+  private func downloaded(_ progress: PreviewInstallProgress) -> String {
+    let formatter = ByteCountFormatter()
+    formatter.countStyle = .file
+    let received = formatter.string(fromByteCount: progress.received)
+    guard progress.expected > 0 else { return received }
+    return "\(received) of \(formatter.string(fromByteCount: progress.expected))"
   }
 
   /// Paces worth offering. Beyond this range Kokoro stops sounding like

@@ -166,13 +166,23 @@ interrupted run resumes rather than starting over.
 
 There are **28 voices**, each with a description and Kokoro's own quality
 grade, and a pace control from 80% to 125%. Only four voices are graded well
-enough to carry a full-length book, and the picker says which. Audition clips
-can be rendered in advance:
+enough to carry a full-length book, and the picker says which.
+
+Every voice can be auditioned before you commit a book to it. The clips are
+not bundled: rendering all 224 of them — 28 voices at 8 paces — takes about a
+day of Kokoro inference, so they are published as a release asset and the app
+fetches them the first time you ask to hear one. It is a single 271 MB
+download with a progress bar, verified against a checksum pinned in the
+source, and it happens only when you ask.
+
+You can also render them yourself, which is what the release is built from:
 
 ```sh
 npx tsx src/render-voice-previews.ts --voice af_heart,af_bella
 npx tsx src/render-voice-previews.ts --speed all   # every voice, every pace
 ```
+
+Locally rendered clips are never overwritten by the download.
 
 ## Using it from the terminal
 

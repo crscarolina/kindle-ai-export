@@ -11,6 +11,7 @@ struct KindleExportApp: App {
         .frame(minWidth: 1000, minHeight: 640)
         .task {
           model.loadCachedLibrary()
+          model.refreshPreviewState()
           await model.checkRequirements()
 
           // Setup opens itself only when something is actually missing, so a

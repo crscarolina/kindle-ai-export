@@ -252,6 +252,54 @@ final class AppModel {
 
   var previewsDir: String { settings.workDir + "/previews" }
 
+  // MARK: - Voice previews
+
+  /// Progress of the one-off preview download, while it is running.
+  var previewDownload: PreviewInstallProgress?
+  var previewDownloadError: String?
+  /// Set once the clips are on disk, so the picker stops offering to fetch.
+  var previewsInstalled = false
+
+  private let previewInstaller = PreviewInstaller()
+
+  /// Whether fetching the clips is worth offering.
+  ///
+  /// Not when they are already here -- a reader who rendered their own set
+  /// locally should never be prompted to download one.
+  var canDownloadPreviews: Bool {
+    voicePreviewRelease.isPublished && !previewsInstalled
+      && previewDownload == nil
+  }
+
+  func refreshPreviewState() {
+    previewsInstalled = previewInstaller.isInstalled(in: previewsDir)
+  }
+
+  /// Fetch the audition clips, once, on first use.
+  ///
+  /// 271 MB, so it is never speculative: it happens when the reader asks to
+  /// hear a voice and there is nothing to play.
+  func downloadPreviews() async {
+    guard previewDownload == nil else { return }
+
+    previewDownloadError = nil
+    previewDownload = PreviewInstallProgress(received: 0, expected: 0)
+    defer { previewDownload = nil }
+
+    do {
+      let dir = previewsDir
+      try await previewInstaller.install(into: dir) { [weak self] progress in
+        Task { @MainActor in self?.previewDownload = progress }
+      }
+      refreshPreviewState()
+      status = "Voice previews ready."
+    } catch is CancellationError {
+      // Cancelling is a choice, not a failure.
+    } catch {
+      previewDownloadError = error.localizedDescription
+    }
+  }
+
   /// The clip auditioning the current voice and pace, if one exists.
   ///
   /// Falls back to the natural-pace clip so the button still works before a
