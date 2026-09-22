@@ -1,14 +1,16 @@
 name: CI
 
-on: [push]
+on:
+  push:
+  pull_request:
 
 jobs:
-  test:
-    name: Test Node.js ${{ matrix.node-version }}
+  pipeline:
+    name: Pipeline (Node ${{ matrix.node-version }})
     runs-on: ubuntu-latest
 
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix:
         node-version:
           - 22
@@ -23,3 +25,42 @@ jobs:
 
       - run: pnpm install --frozen-lockfile --strict-peer-dependencies
       - run: pnpm test
+
+  app:
+    # `macos-latest` is Apple Silicon, while the app is developed on an Intel
+    # Mac. This is the only place arm64 gets exercised at all, so a failure
+    # here is more likely to be a real portability problem than a flake.
+    name: macOS app
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: |
+          swift --version
+          uname -m
+
+      - name: Build
+        run: swift build --package-path app
+
+      - name: Test
+        # A plain executable rather than `swift test`: XCTest and Swift Testing
+        # both ship with Xcode, and the app is developed against the Command
+        # Line Tools alone. The CLIRunner integration case stays skipped -- it
+        # needs a signed-in Amazon session.
+        run: swift run --package-path app KindleExportCoreTests
+
+      - name: Bundle
+        # Debug rather than release: the release mode copies node_modules into
+        # the bundle, which this job deliberately does not install. Everything
+        # else about the script -- the icon, the plist, the ad-hoc signature --
+        # is the same either way.
+        run: ./build-app.sh debug
+        working-directory: app
+
+      - name: Check the bundle
+        run: |
+          test -x app/build/KindleExport.app/Contents/MacOS/KindleExport
+          test -f app/build/KindleExport.app/Contents/Resources/AppIcon.icns
+          plutil -lint app/build/KindleExport.app/Contents/Info.plist
