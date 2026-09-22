@@ -9,6 +9,7 @@ import { KokoroTTS } from 'kokoro-js'
 
 import { parseLibraryCliArgs } from './lib/cli'
 import { createReporter } from './lib/events'
+import { resolveFfmpeg } from './lib/ffmpeg-install'
 import { buildChapterMetadata, encodeM4b } from './lib/m4b'
 import { splitForNarration } from './lib/narration'
 import { VOICES } from './lib/voices'
@@ -48,6 +49,12 @@ async function main() {
     ? VOICES.filter((voice) => wanted.has(voice.id))
     : VOICES
   assert(voices.length, 'no voices selected')
+
+  const ffmpeg = await resolveFfmpeg({
+    home: os.homedir(),
+    arch: process.arch === 'arm64' ? 'arm64' : 'x64',
+    onProgress: (message) => reporter.log(message)
+  })
 
   reporter.log(`loading ${MODEL_ID}`)
   const tts = await KokoroTTS.from_pretrained(MODEL_ID, {
@@ -95,7 +102,12 @@ async function main() {
             artist: `Kokoro ${voice.accent} ${voice.gender.toLowerCase()}`
           })
         )
-        await encodeM4b({ input: wav, output: outFile, metadataFile: meta })
+        await encodeM4b({
+          input: wav,
+          output: outFile,
+          metadataFile: meta,
+          ffmpeg
+        })
       } finally {
         await fs.rm(staging, { recursive: true, force: true })
       }

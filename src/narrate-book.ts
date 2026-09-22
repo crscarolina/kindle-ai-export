@@ -10,6 +10,7 @@ import type { BookMetadata, ContentChunk } from './types'
 import { parseCliArgs } from './lib/cli'
 import { resolveContentPath } from './lib/content'
 import { createReporter } from './lib/events'
+import { resolveFfmpeg } from './lib/ffmpeg-install'
 import {
   buildChapterMetadata,
   chaptersFromToc,
@@ -188,6 +189,14 @@ async function main() {
   const metadataFile = path.join(stagingDir, 'chapters.txt')
 
   try {
+    // Resolved before the join so a missing ffmpeg is reported up front,
+    // rather than after gigabytes of WAV have been written.
+    const ffmpeg = await resolveFfmpeg({
+      home: os.homedir(),
+      arch: process.arch === 'arm64' ? 'arm64' : 'x64',
+      onProgress: (message) => reporter.log(message)
+    })
+
     await joinWavFiles(joined, piecePaths)
 
     const chapters = metadata?.toc
@@ -208,7 +217,7 @@ async function main() {
         : 'encoding M4B (no table of contents, so no chapter markers)'
     )
 
-    await encodeM4b({ input: joined, output: outFile, metadataFile })
+    await encodeM4b({ input: joined, output: outFile, metadataFile, ffmpeg })
   } finally {
     await fs.rm(stagingDir, { recursive: true, force: true })
   }

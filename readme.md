@@ -77,8 +77,14 @@ Whether you download a release or build it yourself:
 - **Google Chrome** — the extractor drives your installed copy
 - **[Claude Code](https://claude.com/claude-code)**, signed in, for the cleanup
   step
-- **ffmpeg** (`brew install ffmpeg`) for audiobooks
 - An Amazon account with books in it
+
+**ffmpeg** is needed for audiobooks, but you do not have to install it. If one
+is already on your `PATH` it is used; otherwise a pinned build is downloaded
+once, checksum-verified, and cached under Application Support. It is fetched
+rather than shipped because ffmpeg is GPL, and bundling it would put this
+project's MIT licence in question -- a binary your own machine downloads is one
+you obtained, exactly as if you had run `brew install ffmpeg`.
 
 A released build ships its own Node, so you do not need one installed.
 **Building from source** additionally needs **Node 20+** and

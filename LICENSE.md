@@ -35,9 +35,12 @@ components:
 
 - **Kokoro-82M** (Apache-2.0), downloaded from the Hugging Face Hub at first
   narration rather than shipped here.
-- **ffmpeg**, invoked from `PATH` as a separate program. Homebrew's build is
-  configured with `--enable-gpl`, so that binary is GPL-licensed; it is not
-  distributed with this project.
+- **ffmpeg**, which is GPL-licensed and deliberately not distributed here. A
+  copy already on `PATH` is used if there is one; otherwise the app downloads
+  a pinned build to the user's own machine and runs it as a separate program.
+  Obtaining a binary on request is not redistribution, so this project's MIT
+  terms are unaffected — the situation is the same as if the user had run
+  `brew install ffmpeg` themselves.
 - **Google Chrome**, driven through Playwright. Not distributed.
 - **Claude Code**, invoked as an external command for the transcription
   cleanup pass. Not distributed.

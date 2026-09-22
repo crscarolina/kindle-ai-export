@@ -132,12 +132,15 @@ export async function encodeM4b({
   input,
   output,
   metadataFile,
-  bitrate = '64k'
+  bitrate = '64k',
+  ffmpeg = 'ffmpeg'
 }: {
   input: string
   output: string
   metadataFile?: string
   bitrate?: string
+  /** Path to the binary; resolved by the caller, which may download one. */
+  ffmpeg?: string
 }): Promise<void> {
   const args = ['-y', '-i', input]
 
@@ -160,7 +163,7 @@ export async function encodeM4b({
   )
 
   await new Promise<void>((resolve, reject) => {
-    const child = spawn('ffmpeg', args, { stdio: ['ignore', 'ignore', 'pipe'] })
+    const child = spawn(ffmpeg, args, { stdio: ['ignore', 'ignore', 'pipe'] })
 
     let stderr = ''
     child.stderr.on('data', (data) => (stderr += data))
