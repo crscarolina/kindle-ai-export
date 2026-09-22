@@ -183,3 +183,26 @@ describe('batchChunks', () => {
     expect(batchChunks([], 100)).toEqual([])
   })
 })
+
+describe('a batch that comes back empty', () => {
+  test('parses no chunks from an error message', () => {
+    // `claude --bare` prints this and exits 0, which reads as success.
+    expect(parseCleanupResponse('Not logged in · Please run /login').size).toBe(
+      0
+    )
+  })
+
+  test('parses no chunks from empty output', () => {
+    expect(parseCleanupResponse('').size).toBe(0)
+  })
+
+  test('applyCleanup on an empty result keeps every original', () => {
+    // The guard that stops text being lost is also what makes the failure
+    // silent, which is why the caller has to treat an empty parse as an error.
+    const batch = [chunk(0, 'First.'), chunk(1, 'Second.')]
+    expect(applyCleanup(batch, new Map()).map((c) => c.text)).toEqual([
+      'First.',
+      'Second.'
+    ])
+  })
+})

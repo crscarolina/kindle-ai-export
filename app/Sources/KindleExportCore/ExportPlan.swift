@@ -88,7 +88,8 @@ public enum ExportPlan {
     state: BookState,
     workDir: String,
     userDataDir: String,
-    destination: String?
+    destination: String?,
+    naming: BookNaming = BookNaming()
   ) -> [ExportCommand] {
     var commands: [ExportCommand] = []
 
@@ -117,18 +118,26 @@ public enum ExportPlan {
     }
 
     for step in artifactOrder where options.formats.contains(step) {
-      add(step, outFile: destination.map { artifactPath(in: $0, step: step, asin: asin) })
+      add(
+        step,
+        outFile: destination.map {
+          artifactPath(in: $0, step: step, asin: asin, naming: naming)
+        })
     }
 
     return commands
   }
 
   /// Where an artifact lands inside the reader's chosen destination folder.
-  public static func artifactPath(in destination: String, step: ExportStep, asin: String)
-    -> String
-  {
+  ///
+  /// Without any book details this falls back to the ASIN, which is what the
+  /// pipeline's own working directory uses.
+  public static func artifactPath(
+    in destination: String, step: ExportStep, asin: String,
+    naming: BookNaming = BookNaming()
+  ) -> String {
     URL(fileURLWithPath: destination)
-      .appending(path: "\(asin)\(fileExtension(for: step))")
+      .appending(path: naming.fileName(asin: asin, fileExtension: fileExtension(for: step)))
       .path(percentEncoded: false)
   }
 

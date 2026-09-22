@@ -45,3 +45,17 @@ public struct ScrollMetrics: Equatable, Sendable {
     return offset >= maxOffset - slop
   }
 }
+
+/// Turns the log buffer into the text that goes on the pasteboard.
+public enum LogClipboard {
+  /// The whole log as one block of plain text.
+  ///
+  /// The text is destined for a chat message or an issue, where a trailing
+  /// newline keeps the last line from running into whatever follows it. An
+  /// empty log yields an empty string rather than a lone newline, so nothing
+  /// is written to the pasteboard at all.
+  public static func text(for lines: [String]) -> String {
+    guard !lines.isEmpty else { return "" }
+    return lines.joined(separator: "\n") + "\n"
+  }
+}

@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest'
 
 import { parseCliArgs, parseLibraryCliArgs } from './cli'
+import { PREVIEW_PACES } from './voices'
 
 const asin = 'B0819W19WD'
 
@@ -383,6 +384,36 @@ describe('parseCliArgs speed', () => {
   test('names the usable range when rejecting', () => {
     expect(() => parseCliArgs(['--asin', asin, '--speed', '9'], {})).toThrow(
       /0\.5/
+    )
+  })
+})
+
+describe('parseLibraryCliArgs speeds', () => {
+  const env = { HOME: '/Users/reader' }
+
+  test('defaults to the natural pace alone', () => {
+    expect(parseLibraryCliArgs([], env).speeds).toEqual([1])
+  })
+
+  test('accepts one pace', () => {
+    expect(parseLibraryCliArgs(['--speed', '0.9'], env).speeds).toEqual([0.9])
+  })
+
+  test('accepts a comma-separated list', () => {
+    expect(parseLibraryCliArgs(['--speed', '0.8,1,1.25'], env).speeds).toEqual([
+      0.8, 1, 1.25
+    ])
+  })
+
+  test('accepts "all" for every pace the picker offers', () => {
+    expect(parseLibraryCliArgs(['--speed', 'all'], env).speeds.length).toBe(
+      PREVIEW_PACES.length
+    )
+  })
+
+  test('rejects a pace outside the usable range', () => {
+    expect(() => parseLibraryCliArgs(['--speed', '0.8,9'], env)).toThrow(
+      /--speed/
     )
   })
 })

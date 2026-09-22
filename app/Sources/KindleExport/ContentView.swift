@@ -1,3 +1,4 @@
+import AppKit
 import KindleExportCore
 import SwiftUI
 
@@ -86,8 +87,9 @@ struct QueueList: View {
                     .buttonStyle(.link)
                     .font(.caption)
                 }
-                if let progress = job.progress {
-                  ProgressView(value: progress).controlSize(.small)
+                if !job.timeline.steps.isEmpty {
+                  JobTimelineView(timeline: job.timeline, compact: true)
+                    .padding(.top, 2)
                 }
               }
             }
@@ -144,25 +146,32 @@ struct LibraryGrid: View {
         .padding(.top, 80)
       } else {
         LazyVGrid(columns: columns, spacing: 20) {
-          ForEach(model.visibleLibrary) { item in
+          // The paging trigger hangs off the cells themselves, not off a
+          // footer below the grid. Only the grid is lazy: anything outside it
+          // is built as soon as the scroll view appears, so a footer sentinel
+          // fired once immediately and then never again -- it kept its view
+          // identity as the grid grew past it, and SwiftUI calls `onAppear`
+          // once per identity. A cell is created by `LazyVGrid` only when the
+          // reader scrolls near it, and each page brings new cells with new
+          // identities, so the trigger keeps firing until nothing is left.
+          ForEach(Array(model.visibleLibrary.enumerated()), id: \.element.id) {
+            index, item in
             BookCell(item: item, isSelected: item.asin == model.selectedAsin)
               .onTapGesture { model.selectedAsin = item.asin }
+              .onAppear { model.cellAppeared(at: index) }
           }
         }
         .padding(18)
 
         if model.hasMoreToShow {
-          // Rendering this sentinel means the reader has scrolled to the end
-          // of what is loaded, so the next rows are added.
-          HStack(spacing: 8) {
-            ProgressView().controlSize(.small)
-            Text("\(model.filteredLibrary.count - model.visibleCount) more")
-              .font(.caption)
-              .foregroundStyle(.secondary)
-          }
-          .frame(maxWidth: .infinity)
-          .padding(.vertical, 20)
-          .onAppear { model.showMore() }
+          // No spinner: widening the window is a larger `prefix` of an array
+          // already in memory. A spinner here would promise a load that never
+          // arrives, which is what made a stalled grid look like a hung one.
+          Text("\(model.remainingToShow) more")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 20)
         } else if model.filteredLibrary.count > AppModel.pageSize {
           Text("\(model.filteredLibrary.count) books")
             .font(.caption)
@@ -223,6 +232,10 @@ struct LogDrawer: View {
   /// settled on its bottom anchor, and acting on it would drop out of
   /// following before the reader has touched anything.
   @State private var hasSettled = false
+  /// Identifies the most recent copy, so the confirmation on the button can
+  /// time out -- and a second copy can restart that timer -- without the view
+  /// owning a timer of its own.
+  @State private var lastCopy: UUID?
 
   private let scrollSpace = "log"
 
@@ -234,6 +247,20 @@ struct LogDrawer: View {
           .font(.caption2)
           .foregroundStyle(.tertiary)
         Spacer()
+        Button(lastCopy == nil ? "Copy" : "Copied") { copyWholeLog() }
+          .buttonStyle(.link)
+          .font(.caption)
+          .disabled(model.log.isEmpty)
+          // "Copied" is the wider word, so reserving its width keeps the
+          // neighbouring buttons from shuffling sideways for a second.
+          .frame(minWidth: 44)
+          .help("Copy every line of the log to the clipboard")
+          .task(id: lastCopy) {
+            guard lastCopy != nil else { return }
+            try? await Task.sleep(for: .seconds(1.5))
+            guard !Task.isCancelled else { return }
+            lastCopy = nil
+          }
         Button("Clear") { model.clearLog() }
           .buttonStyle(.link)
           .font(.caption)
@@ -256,10 +283,18 @@ struct LogDrawer: View {
           ScrollView {
             LazyVStack(alignment: .leading, spacing: 1) {
               ForEach(Array(model.log.enumerated()), id: \.offset) { entry in
+                // Each line is its own view, so `.textSelection` here would
+                // only ever select within one of them: dragging across lines
+                // silently keeps just the last one, and rows the lazy stack
+                // has discarded cannot be in a selection at all. Copying via
+                // the header button or this menu is the honest route.
                 Text(entry.element)
                   .font(.system(.caption, design: .monospaced))
-                  .textSelection(.enabled)
                   .frame(maxWidth: .infinity, alignment: .leading)
+                  .contextMenu {
+                    Button("Copy Line") { copy(entry.element) }
+                    Button("Copy Whole Log") { copyWholeLog() }
+                  }
                   .id(entry.offset)
               }
             }
@@ -291,6 +326,19 @@ struct LogDrawer: View {
       }
     }
     .background(.background.secondary)
+  }
+
+  private func copyWholeLog() {
+    copy(LogClipboard.text(for: model.log))
+    lastCopy = UUID()
+  }
+
+  private func copy(_ text: String) {
+    guard !text.isEmpty else { return }
+    // The pasteboard serves whatever its last owner wrote until the contents
+    // are cleared, so the clear has to come first or the write is dropped.
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(text, forType: .string)
   }
 
   /// Reports where the content sits inside the scroll view as it moves.

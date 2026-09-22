@@ -6,6 +6,7 @@ import {
   DEFAULT_VOICE,
   findVoice,
   longFormVoices,
+  PREVIEW_PACES,
   voiceIds,
   VOICES
 } from './voices'
@@ -123,5 +124,28 @@ describe('the catalogue is usable', () => {
 
   test('lists the default first', () => {
     expect(VOICES[0]!.id).toBe(DEFAULT_VOICE)
+  })
+})
+
+describe('PREVIEW_PACES', () => {
+  test('includes the natural pace', () => {
+    expect(PREVIEW_PACES).toContain(1)
+  })
+
+  test('is sorted slowest first', () => {
+    expect(PREVIEW_PACES).toEqual([...PREVIEW_PACES].toSorted((a, b) => a - b))
+  })
+
+  test('has no duplicates', () => {
+    expect(new Set(PREVIEW_PACES).size).toBe(PREVIEW_PACES.length)
+  })
+
+  test('stays inside the range the CLI accepts', () => {
+    // parseSpeed rejects anything outside 0.5-2.0, so a pace here that fell
+    // outside would render fine and then be unselectable.
+    for (const pace of PREVIEW_PACES) {
+      expect(pace).toBeGreaterThanOrEqual(0.5)
+      expect(pace).toBeLessThanOrEqual(2)
+    }
   })
 })

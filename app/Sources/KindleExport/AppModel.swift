@@ -116,6 +116,11 @@ final class ExportJob: Identifiable {
   let options: ExportOptions
   let destination: String
   var state: State = .queued
+  /// Every step this job will run, and how far each has got.
+  ///
+  /// Populated once the plan is known, which is when the job starts -- what
+  /// runs depends on what is already on disk.
+  var timeline = JobTimeline(steps: [])
 
   init(item: Book, options: ExportOptions, destination: String) {
     self.item = item
@@ -128,7 +133,7 @@ final class ExportJob: Identifiable {
     case .queued: "Queued"
     case .running(let step, let completed, let total):
       total > 0
-        ? "\(step.rawValue) \(completed)/\(total)" : "\(step.rawValue)…"
+        ? "\(step.displayName) \(completed)/\(total)" : "\(step.displayName)…"
     case .finished: "Done"
     case .failed(let message): "Failed — \(message)"
     case .cancelled: "Cancelled"
@@ -177,29 +182,42 @@ final class AppModel {
     }
   }
 
-  /// How many covers to render.
-  ///
-  /// A 234-book library would otherwise start 234 image loads the moment the
-  /// grid appears, so rows are added as the reader scrolls towards them.
-  static let pageSize = 60
-  var visibleCount = pageSize
+  /// How many covers to render. See `PageWindow` for why the grid is paged.
+  static let pageSize = PageWindow.defaultPageSize
+  private var page = PageWindow()
+
+  var visibleCount: Int {
+    page.visibleCount(total: filteredLibrary.count)
+  }
 
   var visibleLibrary: [Book] {
     Array(filteredLibrary.prefix(visibleCount))
   }
 
   var hasMoreToShow: Bool {
-    visibleCount < filteredLibrary.count
+    page.hasMore(total: filteredLibrary.count)
+  }
+
+  /// How many books are still held back.
+  var remainingToShow: Int {
+    page.remaining(total: filteredLibrary.count)
+  }
+
+  /// Called as each cell appears, so the grid grows only once the reader has
+  /// scrolled near the end of what is already rendered.
+  func cellAppeared(at index: Int) {
+    guard page.shouldAdvance(appearedIndex: index, total: filteredLibrary.count)
+    else { return }
+    showMore()
   }
 
   func showMore() {
-    guard hasMoreToShow else { return }
-    visibleCount = min(visibleCount + Self.pageSize, filteredLibrary.count)
+    page.advance(total: filteredLibrary.count)
   }
 
   /// Start again from the top whenever the visible set changes underneath.
   func resetPaging() {
-    visibleCount = Self.pageSize
+    page.reset()
   }
 
   var selectedItem: Book? {
@@ -416,10 +434,14 @@ final class AppModel {
       state: state,
       workDir: settings.workDir,
       userDataDir: settings.sessionDir,
-      destination: job.destination)
+      destination: job.destination,
+      naming: BookNaming(title: job.item.title, authors: job.item.authors))
+
+    job.timeline = JobTimeline(commands: commands)
 
     for command in commands {
       job.state = .running(step: command.step, completed: 0, total: 0)
+      job.timeline.start(command.step)
       do {
         try await consumingEvents(job: job) { emit in
           try await runner.run(
@@ -434,12 +456,16 @@ final class AppModel {
         return
       } catch {
         job.state = .failed(error.localizedDescription)
+        job.timeline.fail(command.step, error.localizedDescription)
         await notify(job, .failed(error.localizedDescription))
         return
       }
+
+      job.timeline.finish(command.step)
     }
 
     job.state = .finished
+    job.timeline.finishAll()
     // Only the artifacts the reader asked for, not the working files.
     await notify(
       job,
@@ -530,14 +556,17 @@ final class AppModel {
     case .page(let index, _, let total):
       if let job, job.isActive, case .running(let step, _, _) = job.state {
         job.state = .running(step: step, completed: index + 1, total: total)
+        job.timeline.advance(step, completed: index + 1, total: total)
       }
     case .stepStart(let step):
       if let job, job.isActive {
         job.state = .running(step: step, completed: 0, total: 0)
+        job.timeline.start(step)
       }
-      append("→ \(step.rawValue)")
+      append("→ \(step.displayName)")
     case .stepDone(let step):
-      append("✓ \(step.rawValue)")
+      job?.timeline.finish(step)
+      append("✓ \(step.displayName)")
     case .sessionExpired:
       needsSignIn = true
       append("Amazon session expired")
