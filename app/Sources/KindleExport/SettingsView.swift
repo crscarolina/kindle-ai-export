@@ -3,21 +3,55 @@ import SwiftUI
 
 struct SettingsView: View {
   @Bindable var model: AppModel
-  @State private var password = ""
 
   var body: some View {
     Form {
-      Section("Pipeline") {
+      Section("Amazon") {
+        Button("Sign In with Amazon…") { Task { await model.signIn() } }
+          .disabled(model.isBusy || !model.settings.isConfigured)
+        Text(
+          "Opens Chrome so you can sign in once, two-factor included. Exports afterwards reuse the browser profile, so the app never handles your password."
+        )
+        .font(.caption)
+        .foregroundStyle(.secondary)
+      }
+
+      Section("Cleanup") {
+        Toggle("Run without Claude Code", isOn: skipClaudeBinding)
+        Text(
+          "Claude repairs the OCR text: paragraph breaks, em-dashes, hyphens split across lines. Turning this on skips that pass and disables the option in the export panel."
+        )
+        .font(.caption)
+        .foregroundStyle(.secondary)
+      }
+
+      Section("Storage") {
+        LabeledContent("Working set", value: model.settings.workDir)
+        LabeledContent("Browser profile", value: model.settings.sessionDir)
+      }
+
+      // Last, and labelled, because nobody running the app needs it: the
+      // pipeline ships inside the bundle. It earns its place only for someone
+      // editing `src/` who wants the app to run their working tree.
+      Section {
         if model.settings.usingBundledRepo {
           Label("Using the copy bundled in the app", systemImage: "shippingbox")
             .font(.callout)
+            .foregroundStyle(.secondary)
         }
 
         HStack {
           TextField(
-            "Override with a checkout (optional)",
+            "Path to a checkout",
             text: $model.settings.repoPathOverride)
+            .onSubmit { recheck() }
           Button("Choose…") { chooseRepo() }
+          if !model.settings.repoPathOverride.isEmpty {
+            Button("Clear") {
+              model.settings.repoPathOverride = ""
+              recheck()
+            }
+          }
         }
 
         if !model.settings.hasNode {
@@ -33,38 +67,38 @@ struct SettingsView: View {
             .font(.caption)
             .foregroundStyle(.orange)
         }
-      }
-
-      Section("Amazon") {
-        TextField("Email", text: $model.settings.amazonEmail)
-          .onChange(of: model.settings.amazonEmail) { old, new in
-            // The Keychain entry is keyed on the email, so carry it across
-            // rather than orphaning it when the address is corrected.
-            model.settings.moveCredential(from: old, to: new)
-          }
-        SecureField("Password", text: $password)
-          .onChange(of: password) { _, value in
-            model.settings.amazonPassword = value
-          }
-        Text("Stored in your Keychain, and passed to the exporter as an environment variable.")
-          .font(.caption)
-          .foregroundStyle(.secondary)
-
-        Button("Sign In to Amazon…") { Task { await model.signIn() } }
-          .disabled(model.isBusy || !model.settings.isConfigured)
-        Text("Opens Chrome so you can sign in once, 2FA included. Exports afterwards run unattended.")
-          .font(.caption)
-          .foregroundStyle(.secondary)
-      }
-
-      Section("Storage") {
-        LabeledContent("Working set", value: model.settings.workDir)
-        LabeledContent("Browser profile", value: model.settings.sessionDir)
+      } header: {
+        Text("Developer")
+      } footer: {
+        Text(
+          "Runs exports from a checkout instead of the pipeline inside the app, so edits to `src/` take effect without rebuilding. Leave it empty otherwise."
+        )
+        .font(.caption)
+        .foregroundStyle(.secondary)
       }
     }
     .formStyle(.grouped)
     .padding()
-    .onAppear { password = model.settings.amazonPassword }
+  }
+
+  private var skipClaudeBinding: Binding<Bool> {
+    Binding(
+      get: { model.settings.skipClaude },
+      set: { newValue in
+        model.settings.skipClaude = newValue
+        // Re-check so the wizard's badges and the export toggle agree with
+        // this immediately, rather than at the next time something opens.
+        Task { await model.checkRequirements() }
+      })
+  }
+
+  /// Re-check after the override settles.
+  ///
+  /// On commit rather than on each keystroke: a half-typed path is not a
+  /// checkout, and re-checking per character would spawn a process per
+  /// character to find out.
+  private func recheck() {
+    Task { await model.checkRequirements() }
   }
 
   private func chooseRepo() {
@@ -73,6 +107,7 @@ struct SettingsView: View {
     panel.canChooseFiles = false
     if panel.runModal() == .OK, let url = panel.url {
       model.settings.repoPathOverride = url.path(percentEncoded: false)
+      recheck()
     }
   }
 }

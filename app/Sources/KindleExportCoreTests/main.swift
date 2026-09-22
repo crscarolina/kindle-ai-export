@@ -881,12 +881,12 @@ t.expect(!nothing.isComplete, "a fresh install is not ready")
 t.expectEqual(nothing.missing.count, Requirement.allCases.count, "everything is missing")
 t.expectEqual(nothing.currentStep, .requirements, "setup starts at requirements")
 
-// The later steps depend on the earlier: there is no point entering an
-// Amazon password when the thing that would use it is not installed.
-var partly = RequirementsReport(satisfied: [.amazonAccount, .amazonSession])
+// The later steps depend on the earlier: there is no point signing in to
+// Amazon when the browser that would carry the session is not installed.
+var partly = RequirementsReport(satisfied: [.amazonSession])
 t.expectEqual(
   partly.currentStep, .requirements,
-  "a configured account does not skip missing tools")
+  "an existing session does not skip missing tools")
 
 partly.satisfied.formUnion([.chrome, .claudeInstalled, .claudeSignedIn, .pipeline])
 t.expectEqual(partly.currentStep, .testRun, "with everything met, only the test run is left")
@@ -913,8 +913,42 @@ t.expectEqual(
   Requirement.chrome.helpURL?.host(), "www.google.com",
   "Chrome links somewhere useful")
 t.expect(
-  Requirement.amazonAccount.helpURL == nil,
+  Requirement.amazonSession.helpURL == nil,
   "a requirement the app itself fixes needs no link")
+
+// Claude only repairs text after the fact, so a reader can decline it and
+// still export. Waiving is kept distinct from satisfying: the requirement is
+// genuinely unmet, and a green check would claim otherwise.
+let withoutClaude = RequirementsReport(
+  satisfied: [.chrome, .pipeline, .amazonSession],
+  waived: [.claudeInstalled, .claudeSignedIn])
+t.expect(
+  withoutClaude.isComplete, "waiving Claude leaves setup complete")
+t.expect(
+  !withoutClaude.isSatisfied(.claudeInstalled),
+  "a waived requirement is not reported as met")
+t.expect(
+  withoutClaude.isWaived(.claudeInstalled), "it is reported as waived")
+t.expect(
+  withoutClaude.missing.isEmpty, "a waived requirement is not in the way")
+t.expectEqual(
+  withoutClaude.currentStep, .testRun,
+  "with Claude waived, only the test run is left")
+
+let claudeStillBlocking = RequirementsReport(
+  satisfied: [.chrome, .pipeline, .amazonSession])
+t.expect(
+  !claudeStillBlocking.isComplete,
+  "without waiving, missing Claude still blocks")
+t.expectEqual(
+  claudeStillBlocking.currentStep, .requirements,
+  "and sends the reader back to the requirements step")
+
+// The cleanup pass is what skipping Claude actually costs.
+t.expectEqual(
+  steps(ExportOptions(clean: false)),
+  [.extractBook, .transcribe, .markdown],
+  "a Claude-free export still extracts, transcribes and writes markdown")
 
 t.expectEqual(SetupStep.allCases.count, 3, "three steps, as designed")
 t.expect(SetupStep.requirements < SetupStep.account, "steps are ordered")

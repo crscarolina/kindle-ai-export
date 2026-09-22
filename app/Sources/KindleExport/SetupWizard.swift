@@ -133,13 +133,16 @@ private struct RequirementRow: View {
 
   var body: some View {
     HStack(alignment: .top, spacing: 12) {
-      Image(systemName: isMet ? "checkmark.circle.fill" : "circle")
+      Image(systemName: symbol)
         .font(.system(size: 16))
-        .foregroundStyle(isMet ? Color.green : .secondary)
+        .foregroundStyle(isWaived ? .secondary : (isMet ? Color.green : .secondary))
 
       VStack(alignment: .leading, spacing: 3) {
-        Text(requirement.title).font(.callout).fontWeight(.medium)
-        Text(requirement.detail)
+        Text(requirement.title)
+          .font(.callout)
+          .fontWeight(.medium)
+          .foregroundStyle(isWaived ? .secondary : .primary)
+        Text(isWaived ? "Skipped." : requirement.detail)
           .font(.caption)
           .foregroundStyle(.secondary)
           .fixedSize(horizontal: false, vertical: true)
@@ -147,11 +150,24 @@ private struct RequirementRow: View {
 
       Spacer()
 
-      if !isMet {
+      if isWaived {
+        Button("Use It") {
+          model.settings.skipClaude = false
+          Task { await model.checkRequirements() }
+        }
+        .font(.callout)
+      } else if !isMet {
         action
       }
     }
   }
+
+  private var symbol: String {
+    if isWaived { return "minus.circle" }
+    return isMet ? "checkmark.circle.fill" : "circle"
+  }
+
+  private var isWaived: Bool { model.requirements.isWaived(requirement) }
 
   @ViewBuilder
   private var action: some View {
@@ -206,55 +222,95 @@ private struct RequirementsStep: View {
       }
     }
     .padding(.top, 4)
+
+    // Chrome is not negotiable -- without it there is nothing to export from.
+    // Claude only repairs the text afterwards, so setup should not dead-end a
+    // reader who would rather not install it.
+    if claudeMissing {
+      Divider().padding(.vertical, 2)
+
+      VStack(alignment: .leading, spacing: 6) {
+        Button("Continue without Claude Code") {
+          model.settings.skipClaude = true
+          Task { await model.checkRequirements() }
+        }
+
+        Text(
+          "Exports still work. Transcripts keep the OCR's hard line wraps and its stray hyphens, and the audiobook is read from that same rougher text."
+        )
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .fixedSize(horizontal: false, vertical: true)
+      }
+    }
+  }
+
+  private var claudeMissing: Bool {
+    [.claudeInstalled, .claudeSignedIn].contains {
+      !model.requirements.isSatisfied($0) && !model.requirements.isWaived($0)
+    }
   }
 }
 
 private struct AccountStep: View {
   @Bindable var model: AppModel
-  @State private var password = ""
 
   var body: some View {
     Text("Your Amazon account")
       .font(.title3.weight(.semibold))
 
     Text(
-      "Your password goes to the Keychain, and reaches the exporter as an environment variable rather than on a command line. Signing in opens Chrome so you can complete it by hand, including two-factor, once."
+      "Chrome opens on the Kindle library and you sign in there, two-factor and all. The app never sees your password: what it keeps is the browser profile, the same thing that keeps you signed in to a site you visit every day."
     )
     .font(.callout)
     .foregroundStyle(.secondary)
     .fixedSize(horizontal: false, vertical: true)
 
-    Form {
-      TextField("Email", text: $model.settings.amazonEmail)
-      SecureField("Password", text: $password)
-        .onChange(of: password) { _, value in
-          model.settings.amazonPassword = value
-          Task { await model.checkRequirements() }
-        }
-    }
-    .formStyle(.grouped)
-    .frame(height: 90)
-
     HStack(spacing: 12) {
-      Button("Sign In to Amazon…") {
-        Task {
-          await model.signIn()
-          await model.checkRequirements()
-        }
+      // Prominent until there is a session, plain once there is one: the
+      // button stays available for a re-sign-in without still reading as the
+      // thing the reader is here to do.
+      if signedIn {
+        Button("Sign In Again…") { startSignIn() }
+          .disabled(model.isBusy)
+      } else {
+        Button("Sign In with Amazon…") { startSignIn() }
+          .buttonStyle(.borderedProminent)
+          .disabled(model.isBusy)
       }
-      .disabled(
-        model.isBusy
-          || !model.requirements.isSatisfied(.amazonAccount))
 
-      if model.isBusy { ProgressView().controlSize(.small) }
-
-      if model.requirements.isSatisfied(.amazonSession) {
+      if model.isBusy {
+        ProgressView().controlSize(.small)
+        Text("Finish in the Chrome window…")
+          .font(.callout)
+          .foregroundStyle(.secondary)
+      } else if signedIn {
         Label("Signed in", systemImage: "checkmark.circle.fill")
           .font(.callout)
           .foregroundStyle(.green)
       }
     }
-    .onAppear { password = model.settings.amazonPassword }
+    .padding(.top, 4)
+
+    if signedIn {
+      Text(
+        "Sign in again if exports start failing with an expired session, or to switch to a different Amazon account."
+      )
+      .font(.caption)
+      .foregroundStyle(.secondary)
+      .fixedSize(horizontal: false, vertical: true)
+    }
+  }
+
+  private var signedIn: Bool {
+    model.requirements.isSatisfied(.amazonSession)
+  }
+
+  private func startSignIn() {
+    Task {
+      await model.signIn()
+      await model.checkRequirements()
+    }
   }
 }
 

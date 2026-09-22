@@ -6,7 +6,6 @@ public enum Requirement: String, CaseIterable, Sendable {
   case claudeInstalled
   case claudeSignedIn
   case pipeline
-  case amazonAccount
   case amazonSession
 
   public var title: String {
@@ -15,7 +14,6 @@ public enum Requirement: String, CaseIterable, Sendable {
     case .claudeInstalled: "Claude Code"
     case .claudeSignedIn: "Claude Code sign-in"
     case .pipeline: "Export pipeline"
-    case .amazonAccount: "Amazon account"
     case .amazonSession: "Amazon sign-in"
     }
   }
@@ -25,15 +23,13 @@ public enum Requirement: String, CaseIterable, Sendable {
     case .chrome:
       "Pages are captured by driving your own copy of Chrome."
     case .claudeInstalled:
-      "The cleanup pass runs through the claude command."
+      "Repairs the OCR text: paragraph breaks, em-dashes, hyphens split across lines. Optional, but transcripts are rougher without it."
     case .claudeSignedIn:
       "Cleanup uses your Claude subscription, so it needs to be signed in."
     case .pipeline:
       "The scripts that do the work, bundled with the app."
-    case .amazonAccount:
-      "Your email and password, kept in the Keychain."
     case .amazonSession:
-      "A browser session, so exports can run without asking you each time."
+      "One sign-in in a real Chrome window, two-factor included. Every export after that reuses the profile it leaves behind."
     }
   }
 
@@ -44,7 +40,6 @@ public enum Requirement: String, CaseIterable, Sendable {
     case .claudeInstalled: "Installation instructions"
     case .claudeSignedIn: "Run claude in a terminal and sign in"
     case .pipeline: "Choose a checkout"
-    case .amazonAccount: "Enter your details"
     case .amazonSession: "Sign in to Amazon"
     }
   }
@@ -62,7 +57,7 @@ public enum Requirement: String, CaseIterable, Sendable {
   public var step: SetupStep {
     switch self {
     case .chrome, .claudeInstalled, .claudeSignedIn, .pipeline: .requirements
-    case .amazonAccount, .amazonSession: .account
+    case .amazonSession: .account
     }
   }
 }
@@ -89,16 +84,33 @@ public enum SetupStep: Int, CaseIterable, Comparable, Sendable {
 public struct RequirementsReport: Equatable, Sendable {
   public var satisfied: Set<Requirement>
 
-  public init(satisfied: Set<Requirement> = []) {
+  /// Requirements the reader has chosen to do without.
+  ///
+  /// Kept apart from `satisfied` rather than folded into it: a waived
+  /// requirement is still unmet, and showing it as a green check would claim
+  /// something the app cannot see. Setup stops blocking on it; that is all.
+  public var waived: Set<Requirement>
+
+  public init(
+    satisfied: Set<Requirement> = [], waived: Set<Requirement> = []
+  ) {
     self.satisfied = satisfied
+    self.waived = waived
   }
 
   public func isSatisfied(_ requirement: Requirement) -> Bool {
     satisfied.contains(requirement)
   }
 
+  public func isWaived(_ requirement: Requirement) -> Bool {
+    waived.contains(requirement)
+  }
+
+  /// Requirements that are neither met nor waived -- the ones still in the way.
   public var missing: [Requirement] {
-    Requirement.allCases.filter { !satisfied.contains($0) }
+    Requirement.allCases.filter {
+      !satisfied.contains($0) && !waived.contains($0)
+    }
   }
 
   public var isComplete: Bool { missing.isEmpty }
@@ -111,8 +123,8 @@ public struct RequirementsReport: Equatable, Sendable {
   /// The step the reader should be on.
   ///
   /// The earliest incomplete one, because the later steps depend on the
-  /// earlier: there is no point entering an Amazon password when the thing
-  /// that would use it is not installed.
+  /// earlier: there is no point signing in to Amazon when the browser that
+  /// would carry the session is not installed.
   public var currentStep: SetupStep {
     SetupStep.allCases.first { !isComplete($0) } ?? .testRun
   }

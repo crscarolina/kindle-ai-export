@@ -5,7 +5,10 @@ import Observation
 /// SwiftUI declares its own `LibraryItem`, so refer to ours by an alias.
 typealias Book = KindleExportCore.LibraryItem
 
-/// Persisted preferences. The password lives in the Keychain, not here.
+/// Persisted preferences.
+///
+/// No Amazon credentials: the browser profile carries the session, so there
+/// is nothing for the app to store and nothing to leak.
 @Observable
 @MainActor
 final class AppSettings {
@@ -14,11 +17,17 @@ final class AppSettings {
   var repoPathOverride: String {
     didSet { defaults.set(repoPathOverride, forKey: "repoPath") }
   }
-  var amazonEmail: String {
-    didSet { defaults.set(amazonEmail, forKey: "amazonEmail") }
-  }
   var destination: String {
     didSet { defaults.set(destination, forKey: "destination") }
+  }
+
+  /// Run without Claude Code, giving up the OCR cleanup pass.
+  ///
+  /// A deliberate choice rather than a fallback: the reader says in setup
+  /// that they do not want to install it, and every export afterwards skips
+  /// cleanup without asking again.
+  var skipClaude: Bool {
+    didSet { defaults.set(skipClaude, forKey: "skipClaude") }
   }
 
   private let defaults = UserDefaults.standard
@@ -26,16 +35,11 @@ final class AppSettings {
   init() {
     let defaults = UserDefaults.standard
     repoPathOverride = defaults.string(forKey: "repoPath") ?? ""
-    amazonEmail = defaults.string(forKey: "amazonEmail") ?? ""
+    skipClaude = defaults.bool(forKey: "skipClaude")
     destination =
       defaults.string(forKey: "destination")
       ?? FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)
         .first?.path(percentEncoded: false) ?? ""
-  }
-
-  var amazonPassword: String {
-    get { Keychain.get(account: amazonEmail) ?? "" }
-    set { try? Keychain.set(newValue, account: amazonEmail) }
   }
 
   /// The Node pipeline shipped inside the app.
@@ -71,23 +75,6 @@ final class AppSettings {
 
   var toolchain: ToolchainConfig {
     ToolchainConfig(repoRoot: URL(fileURLWithPath: repoPath))
-  }
-
-  /// Credentials for the child process. Passed as environment, never argv.
-  var credentials: [String: String] {
-    var env: [String: String] = [:]
-    if !amazonEmail.isEmpty { env["AMAZON_EMAIL"] = amazonEmail }
-    if !amazonPassword.isEmpty { env["AMAZON_PASSWORD"] = amazonPassword }
-    return env
-  }
-
-  /// Re-key the stored password when the email changes.
-  func moveCredential(from old: String, to new: String) {
-    guard old != new, !old.isEmpty else { return }
-    guard let secret = Keychain.get(account: old) else { return }
-
-    try? Keychain.set(secret, account: new)
-    try? Keychain.delete(account: old)
   }
 
   var hasNode: Bool { ToolchainConfig.locateNode() != nil }
@@ -341,12 +328,16 @@ final class AppModel {
     var satisfied: Set<Requirement> = []
 
     if checker.hasChrome() { satisfied.insert(.chrome) }
-    if checker.claudeExecutable() != nil { satisfied.insert(.claudeInstalled) }
-    if await checker.isClaudeSignedIn() { satisfied.insert(.claudeSignedIn) }
     if settings.isConfigured { satisfied.insert(.pipeline) }
 
-    if !settings.amazonEmail.isEmpty, !settings.amazonPassword.isEmpty {
-      satisfied.insert(.amazonAccount)
+    // Don't spawn `claude auth status` on every re-check for a reader who has
+    // said they are not using it.
+    var waived: Set<Requirement> = []
+    if settings.skipClaude {
+      waived = [.claudeInstalled, .claudeSignedIn]
+    } else {
+      if checker.claudeExecutable() != nil { satisfied.insert(.claudeInstalled) }
+      if await checker.isClaudeSignedIn() { satisfied.insert(.claudeSignedIn) }
     }
 
     // A profile directory with cookies in it is the only evidence available
@@ -357,14 +348,11 @@ final class AppModel {
       satisfied.insert(.amazonSession)
     }
 
-    requirements = RequirementsReport(satisfied: satisfied)
-
-    if showSetup {
-      setupStep = max(setupStep, requirements.currentStep)
-      if requirements.isComplete(setupStep), setupStep != .testRun {
-        setupStep = requirements.currentStep
-      }
-    }
+    requirements = RequirementsReport(satisfied: satisfied, waived: waived)
+    // Deliberately does not move `setupStep`. This runs on a timer-ish
+    // cadence -- every re-check, every field edit -- and moving the step
+    // here yanked the form away mid-keystroke. The two places that present
+    // the wizard choose the opening step; after that it is the reader's.
   }
 
   /// Send the reader to the step that can fix a given requirement.
@@ -432,7 +420,6 @@ final class AppModel {
           arguments: [
             "--user-data-dir", settings.sessionDir, "--out-file", out, "--json",
           ],
-          credentials: settings.credentials,
           onEvent: emit)
       }
 
@@ -462,7 +449,6 @@ final class AppModel {
         try await runner.runScript(
           "src/sign-in.ts",
           arguments: ["--user-data-dir", settings.sessionDir, "--json"],
-          credentials: settings.credentials,
           onEvent: emit)
       }
       needsSignIn = false
@@ -479,8 +465,22 @@ final class AppModel {
   func enqueueSelected() {
     guard let item = selectedItem else { return }
     jobs.append(
-      ExportJob(item: item, options: options, destination: settings.destination))
+      ExportJob(
+        item: item, options: effectiveOptions,
+        destination: settings.destination))
     startPumpIfNeeded()
+  }
+
+  /// What to actually run, as opposed to what the panel last showed.
+  ///
+  /// Skipping Claude removes the cleanup pass outright, and the toggle is
+  /// disabled to say so. Forcing it here too means a value left over from
+  /// before the reader opted out cannot quietly schedule a step that would
+  /// fail on a machine with no `claude` on it.
+  var effectiveOptions: ExportOptions {
+    var resolved = options
+    if settings.skipClaude { resolved.clean = false }
+    return resolved
   }
 
   func clearFinishedJobs() {
@@ -543,7 +543,7 @@ final class AppModel {
       do {
         try await consumingEvents(job: job) { emit in
           try await runner.run(
-            command, credentials: settings.credentials, onEvent: emit)
+            command, onEvent: emit)
         }
       } catch CLIRunnerError.sessionExpired {
         needsSignIn = true

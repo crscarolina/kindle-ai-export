@@ -76,8 +76,13 @@ Whether you download a release or build it yourself:
 - **macOS 14 or later**
 - **Google Chrome** — the extractor drives your installed copy
 - **[Claude Code](https://claude.com/claude-code)**, signed in, for the cleanup
-  step
+  step — optional, see below
 - An Amazon account with books in it
+
+Claude Code is the one you can decline. It repairs the OCR text: paragraph
+breaks, em-dashes, hyphens split across line ends. Skip it and everything
+still runs, but transcripts keep the OCR's hard line wraps and stray hyphens,
+and the audiobook is narrated from that same rougher text.
 
 **ffmpeg** is needed for audiobooks, but you do not have to install it. If one
 is already on your `PATH` it is used; otherwise a pinned build is downloaded
@@ -114,13 +119,17 @@ cd app
 
 Then, in the app:
 
-1. Open **Settings (⌘,)** and enter your Amazon email and password. The
-   password is stored in your Keychain and handed to the exporter as an
-   environment variable, never on a command line.
-2. Click **Sign In to Amazon**. Chrome opens visibly so you can complete
-   sign-in and two-factor by hand, once. Every export afterwards reuses that
-   session unattended.
-3. Click **Refresh** to load your library.
+1. A setup wizard checks what the app needs — Chrome, Claude Code, and a
+   Claude Code sign-in — and links you to whatever is missing. Claude is
+   optional: **Continue without Claude Code** skips the OCR cleanup pass for
+   good, and you can change your mind in Settings.
+2. Click **Sign In with Amazon**. Chrome opens visibly so you can sign in and
+   clear two-factor by hand, once. The app never asks for or stores your
+   password: what persists is the browser profile, the same thing that keeps
+   you signed in to a site you visit daily. Every export afterwards reuses it
+   unattended.
+3. The wizard's test run loads your library, proving Chrome, the profile and
+   the session all work together.
 4. Pick a book, choose your formats, and press **Export**.
 
 Exports run one at a time — Chrome takes an exclusive lock on the shared

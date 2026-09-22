@@ -57,10 +57,13 @@ async function main() {
   reporter.emit({ event: 'step-start', step: 'extract' })
 
   const asin = opts.asin
+  // Optional, and unused in the normal case: `sign-in.ts` establishes the
+  // browser profile once and every run after that arrives already
+  // authenticated. They exist for an unattended terminal run on a fresh
+  // profile, and only help when Amazon does not challenge -- the 2FA prompt
+  // below has no answer the app could give it.
   const amazonEmail = getEnv('AMAZON_EMAIL')
   const amazonPassword = getEnv('AMAZON_PASSWORD')
-  assert(amazonEmail, 'AMAZON_EMAIL is required')
-  assert(amazonPassword, 'AMAZON_PASSWORD is required')
   const asinL = asin.toLowerCase()
 
   const outDir = opts.bookDir
@@ -299,6 +302,13 @@ async function main() {
 
   // If we're on the signin page, start the authentication flow.
   if (/\/ap\/signin/g.test(new URL(page.url()).pathname)) {
+    if (!amazonEmail || !amazonPassword) {
+      reporter.emit({ event: 'session-expired' })
+      throw new Error(
+        'Not signed in to Amazon. Run `tsx src/sign-in.ts` and sign in in the Chrome window that opens, or sign in from the app.'
+      )
+    }
+
     await page.locator('input[type="email"]').fill(amazonEmail)
     await page.locator('input[type="submit"]').click()
 
