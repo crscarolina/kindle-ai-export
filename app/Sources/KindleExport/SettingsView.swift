@@ -44,6 +44,15 @@ struct SettingsView: View {
         .foregroundStyle(.secondary)
       }
 
+      Section("Cleanup") {
+        Toggle("Run without Claude Code", isOn: skipClaudeBinding)
+        Text(
+          "Claude repairs the OCR text: paragraph breaks, em-dashes, hyphens split across lines. Turning this on skips that pass and disables the option in the export panel."
+        )
+        .font(.caption)
+        .foregroundStyle(.secondary)
+      }
+
       Section("Storage") {
         LabeledContent("Working set", value: model.settings.workDir)
         LabeledContent("Browser profile", value: model.settings.sessionDir)
@@ -51,6 +60,17 @@ struct SettingsView: View {
     }
     .formStyle(.grouped)
     .padding()
+  }
+
+  private var skipClaudeBinding: Binding<Bool> {
+    Binding(
+      get: { model.settings.skipClaude },
+      set: { newValue in
+        model.settings.skipClaude = newValue
+        // Re-check so the wizard's badges and the export toggle agree with
+        // this immediately, rather than at the next time something opens.
+        Task { await model.checkRequirements() }
+      })
   }
 
   private func chooseRepo() {

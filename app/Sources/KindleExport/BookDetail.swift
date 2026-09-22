@@ -34,7 +34,15 @@ struct BookDetail: View {
         }
 
         Section("Options") {
-          Toggle("Clean up transcription with Claude", isOn: $model.options.clean)
+          Toggle("Clean up transcription with Claude", isOn: cleanBinding)
+            .disabled(model.settings.skipClaude)
+          if model.settings.skipClaude {
+            Text(
+              "Off because you chose to run without Claude Code. Change that in Settings (⌘,)."
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
+          }
           Toggle("Re-run completed steps", isOn: $model.options.force)
           Toggle("Preview first 50 pages only", isOn: previewBinding)
         }
@@ -142,6 +150,14 @@ struct BookDetail: View {
           model.options.formats.remove(step)
         }
       })
+  }
+
+  /// Reads as off, and refuses to turn on, while Claude is skipped -- so the
+  /// panel cannot show a pass that `effectiveOptions` would strip anyway.
+  private var cleanBinding: Binding<Bool> {
+    Binding(
+      get: { model.options.clean && !model.settings.skipClaude },
+      set: { model.options.clean = $0 })
   }
 
   private var previewBinding: Binding<Bool> {

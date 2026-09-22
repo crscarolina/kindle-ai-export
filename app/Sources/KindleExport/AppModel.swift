@@ -21,11 +21,21 @@ final class AppSettings {
     didSet { defaults.set(destination, forKey: "destination") }
   }
 
+  /// Run without Claude Code, giving up the OCR cleanup pass.
+  ///
+  /// A deliberate choice rather than a fallback: the reader says in setup
+  /// that they do not want to install it, and every export afterwards skips
+  /// cleanup without asking again.
+  var skipClaude: Bool {
+    didSet { defaults.set(skipClaude, forKey: "skipClaude") }
+  }
+
   private let defaults = UserDefaults.standard
 
   init() {
     let defaults = UserDefaults.standard
     repoPathOverride = defaults.string(forKey: "repoPath") ?? ""
+    skipClaude = defaults.bool(forKey: "skipClaude")
     destination =
       defaults.string(forKey: "destination")
       ?? FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)
@@ -318,9 +328,17 @@ final class AppModel {
     var satisfied: Set<Requirement> = []
 
     if checker.hasChrome() { satisfied.insert(.chrome) }
-    if checker.claudeExecutable() != nil { satisfied.insert(.claudeInstalled) }
-    if await checker.isClaudeSignedIn() { satisfied.insert(.claudeSignedIn) }
     if settings.isConfigured { satisfied.insert(.pipeline) }
+
+    // Don't spawn `claude auth status` on every re-check for a reader who has
+    // said they are not using it.
+    var waived: Set<Requirement> = []
+    if settings.skipClaude {
+      waived = [.claudeInstalled, .claudeSignedIn]
+    } else {
+      if checker.claudeExecutable() != nil { satisfied.insert(.claudeInstalled) }
+      if await checker.isClaudeSignedIn() { satisfied.insert(.claudeSignedIn) }
+    }
 
     // A profile directory with cookies in it is the only evidence available
     // without opening a browser; whether the session is still valid shows up
@@ -330,7 +348,7 @@ final class AppModel {
       satisfied.insert(.amazonSession)
     }
 
-    requirements = RequirementsReport(satisfied: satisfied)
+    requirements = RequirementsReport(satisfied: satisfied, waived: waived)
     // Deliberately does not move `setupStep`. This runs on a timer-ish
     // cadence -- every re-check, every field edit -- and moving the step
     // here yanked the form away mid-keystroke. The two places that present
@@ -447,8 +465,22 @@ final class AppModel {
   func enqueueSelected() {
     guard let item = selectedItem else { return }
     jobs.append(
-      ExportJob(item: item, options: options, destination: settings.destination))
+      ExportJob(
+        item: item, options: effectiveOptions,
+        destination: settings.destination))
     startPumpIfNeeded()
+  }
+
+  /// What to actually run, as opposed to what the panel last showed.
+  ///
+  /// Skipping Claude removes the cleanup pass outright, and the toggle is
+  /// disabled to say so. Forcing it here too means a value left over from
+  /// before the reader opted out cannot quietly schedule a step that would
+  /// fail on a machine with no `claude` on it.
+  var effectiveOptions: ExportOptions {
+    var resolved = options
+    if settings.skipClaude { resolved.clean = false }
+    return resolved
   }
 
   func clearFinishedJobs() {

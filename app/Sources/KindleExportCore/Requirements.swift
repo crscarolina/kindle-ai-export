@@ -23,7 +23,7 @@ public enum Requirement: String, CaseIterable, Sendable {
     case .chrome:
       "Pages are captured by driving your own copy of Chrome."
     case .claudeInstalled:
-      "The cleanup pass runs through the claude command."
+      "Repairs the OCR text: paragraph breaks, em-dashes, hyphens split across lines. Optional, but transcripts are rougher without it."
     case .claudeSignedIn:
       "Cleanup uses your Claude subscription, so it needs to be signed in."
     case .pipeline:
@@ -84,16 +84,33 @@ public enum SetupStep: Int, CaseIterable, Comparable, Sendable {
 public struct RequirementsReport: Equatable, Sendable {
   public var satisfied: Set<Requirement>
 
-  public init(satisfied: Set<Requirement> = []) {
+  /// Requirements the reader has chosen to do without.
+  ///
+  /// Kept apart from `satisfied` rather than folded into it: a waived
+  /// requirement is still unmet, and showing it as a green check would claim
+  /// something the app cannot see. Setup stops blocking on it; that is all.
+  public var waived: Set<Requirement>
+
+  public init(
+    satisfied: Set<Requirement> = [], waived: Set<Requirement> = []
+  ) {
     self.satisfied = satisfied
+    self.waived = waived
   }
 
   public func isSatisfied(_ requirement: Requirement) -> Bool {
     satisfied.contains(requirement)
   }
 
+  public func isWaived(_ requirement: Requirement) -> Bool {
+    waived.contains(requirement)
+  }
+
+  /// Requirements that are neither met nor waived -- the ones still in the way.
   public var missing: [Requirement] {
-    Requirement.allCases.filter { !satisfied.contains($0) }
+    Requirement.allCases.filter {
+      !satisfied.contains($0) && !waived.contains($0)
+    }
   }
 
   public var isComplete: Bool { missing.isEmpty }

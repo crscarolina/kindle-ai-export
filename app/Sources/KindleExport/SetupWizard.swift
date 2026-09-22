@@ -133,13 +133,16 @@ private struct RequirementRow: View {
 
   var body: some View {
     HStack(alignment: .top, spacing: 12) {
-      Image(systemName: isMet ? "checkmark.circle.fill" : "circle")
+      Image(systemName: symbol)
         .font(.system(size: 16))
-        .foregroundStyle(isMet ? Color.green : .secondary)
+        .foregroundStyle(isWaived ? .secondary : (isMet ? Color.green : .secondary))
 
       VStack(alignment: .leading, spacing: 3) {
-        Text(requirement.title).font(.callout).fontWeight(.medium)
-        Text(requirement.detail)
+        Text(requirement.title)
+          .font(.callout)
+          .fontWeight(.medium)
+          .foregroundStyle(isWaived ? .secondary : .primary)
+        Text(isWaived ? "Skipped." : requirement.detail)
           .font(.caption)
           .foregroundStyle(.secondary)
           .fixedSize(horizontal: false, vertical: true)
@@ -147,11 +150,24 @@ private struct RequirementRow: View {
 
       Spacer()
 
-      if !isMet {
+      if isWaived {
+        Button("Use It") {
+          model.settings.skipClaude = false
+          Task { await model.checkRequirements() }
+        }
+        .font(.callout)
+      } else if !isMet {
         action
       }
     }
   }
+
+  private var symbol: String {
+    if isWaived { return "minus.circle" }
+    return isMet ? "checkmark.circle.fill" : "circle"
+  }
+
+  private var isWaived: Bool { model.requirements.isWaived(requirement) }
 
   @ViewBuilder
   private var action: some View {
@@ -206,6 +222,33 @@ private struct RequirementsStep: View {
       }
     }
     .padding(.top, 4)
+
+    // Chrome is not negotiable -- without it there is nothing to export from.
+    // Claude only repairs the text afterwards, so setup should not dead-end a
+    // reader who would rather not install it.
+    if claudeMissing {
+      Divider().padding(.vertical, 2)
+
+      VStack(alignment: .leading, spacing: 6) {
+        Button("Continue without Claude Code") {
+          model.settings.skipClaude = true
+          Task { await model.checkRequirements() }
+        }
+
+        Text(
+          "Exports still work. Transcripts keep the OCR's hard line wraps and its stray hyphens, and the audiobook is read from that same rougher text."
+        )
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .fixedSize(horizontal: false, vertical: true)
+      }
+    }
+  }
+
+  private var claudeMissing: Bool {
+    [.claudeInstalled, .claudeSignedIn].contains {
+      !model.requirements.isSatisfied($0) && !model.requirements.isWaived($0)
+    }
   }
 }
 
