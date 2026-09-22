@@ -5,7 +5,10 @@ import Observation
 /// SwiftUI declares its own `LibraryItem`, so refer to ours by an alias.
 typealias Book = KindleExportCore.LibraryItem
 
-/// Persisted preferences. The password lives in the Keychain, not here.
+/// Persisted preferences.
+///
+/// No Amazon credentials: the browser profile carries the session, so there
+/// is nothing for the app to store and nothing to leak.
 @Observable
 @MainActor
 final class AppSettings {
@@ -13,9 +16,6 @@ final class AppSettings {
   /// pipeline, which is the normal case.
   var repoPathOverride: String {
     didSet { defaults.set(repoPathOverride, forKey: "repoPath") }
-  }
-  var amazonEmail: String {
-    didSet { defaults.set(amazonEmail, forKey: "amazonEmail") }
   }
   var destination: String {
     didSet { defaults.set(destination, forKey: "destination") }
@@ -26,16 +26,10 @@ final class AppSettings {
   init() {
     let defaults = UserDefaults.standard
     repoPathOverride = defaults.string(forKey: "repoPath") ?? ""
-    amazonEmail = defaults.string(forKey: "amazonEmail") ?? ""
     destination =
       defaults.string(forKey: "destination")
       ?? FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)
         .first?.path(percentEncoded: false) ?? ""
-  }
-
-  var amazonPassword: String {
-    get { Keychain.get(account: amazonEmail) ?? "" }
-    set { try? Keychain.set(newValue, account: amazonEmail) }
   }
 
   /// The Node pipeline shipped inside the app.
@@ -71,23 +65,6 @@ final class AppSettings {
 
   var toolchain: ToolchainConfig {
     ToolchainConfig(repoRoot: URL(fileURLWithPath: repoPath))
-  }
-
-  /// Credentials for the child process. Passed as environment, never argv.
-  var credentials: [String: String] {
-    var env: [String: String] = [:]
-    if !amazonEmail.isEmpty { env["AMAZON_EMAIL"] = amazonEmail }
-    if !amazonPassword.isEmpty { env["AMAZON_PASSWORD"] = amazonPassword }
-    return env
-  }
-
-  /// Re-key the stored password when the email changes.
-  func moveCredential(from old: String, to new: String) {
-    guard old != new, !old.isEmpty else { return }
-    guard let secret = Keychain.get(account: old) else { return }
-
-    try? Keychain.set(secret, account: new)
-    try? Keychain.delete(account: old)
   }
 
   var hasNode: Bool { ToolchainConfig.locateNode() != nil }
@@ -345,10 +322,6 @@ final class AppModel {
     if await checker.isClaudeSignedIn() { satisfied.insert(.claudeSignedIn) }
     if settings.isConfigured { satisfied.insert(.pipeline) }
 
-    if !settings.amazonEmail.isEmpty, !settings.amazonPassword.isEmpty {
-      satisfied.insert(.amazonAccount)
-    }
-
     // A profile directory with cookies in it is the only evidence available
     // without opening a browser; whether the session is still valid shows up
     // when it is used.
@@ -358,13 +331,10 @@ final class AppModel {
     }
 
     requirements = RequirementsReport(satisfied: satisfied)
-
-    if showSetup {
-      setupStep = max(setupStep, requirements.currentStep)
-      if requirements.isComplete(setupStep), setupStep != .testRun {
-        setupStep = requirements.currentStep
-      }
-    }
+    // Deliberately does not move `setupStep`. This runs on a timer-ish
+    // cadence -- every re-check, every field edit -- and moving the step
+    // here yanked the form away mid-keystroke. The two places that present
+    // the wizard choose the opening step; after that it is the reader's.
   }
 
   /// Send the reader to the step that can fix a given requirement.
@@ -432,7 +402,6 @@ final class AppModel {
           arguments: [
             "--user-data-dir", settings.sessionDir, "--out-file", out, "--json",
           ],
-          credentials: settings.credentials,
           onEvent: emit)
       }
 
@@ -462,7 +431,6 @@ final class AppModel {
         try await runner.runScript(
           "src/sign-in.ts",
           arguments: ["--user-data-dir", settings.sessionDir, "--json"],
-          credentials: settings.credentials,
           onEvent: emit)
       }
       needsSignIn = false
@@ -543,7 +511,7 @@ final class AppModel {
       do {
         try await consumingEvents(job: job) { emit in
           try await runner.run(
-            command, credentials: settings.credentials, onEvent: emit)
+            command, onEvent: emit)
         }
       } catch CLIRunnerError.sessionExpired {
         needsSignIn = true

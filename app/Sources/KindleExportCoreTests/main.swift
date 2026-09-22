@@ -881,12 +881,12 @@ t.expect(!nothing.isComplete, "a fresh install is not ready")
 t.expectEqual(nothing.missing.count, Requirement.allCases.count, "everything is missing")
 t.expectEqual(nothing.currentStep, .requirements, "setup starts at requirements")
 
-// The later steps depend on the earlier: there is no point entering an
-// Amazon password when the thing that would use it is not installed.
-var partly = RequirementsReport(satisfied: [.amazonAccount, .amazonSession])
+// The later steps depend on the earlier: there is no point signing in to
+// Amazon when the browser that would carry the session is not installed.
+var partly = RequirementsReport(satisfied: [.amazonSession])
 t.expectEqual(
   partly.currentStep, .requirements,
-  "a configured account does not skip missing tools")
+  "an existing session does not skip missing tools")
 
 partly.satisfied.formUnion([.chrome, .claudeInstalled, .claudeSignedIn, .pipeline])
 t.expectEqual(partly.currentStep, .testRun, "with everything met, only the test run is left")
@@ -913,7 +913,7 @@ t.expectEqual(
   Requirement.chrome.helpURL?.host(), "www.google.com",
   "Chrome links somewhere useful")
 t.expect(
-  Requirement.amazonAccount.helpURL == nil,
+  Requirement.amazonSession.helpURL == nil,
   "a requirement the app itself fixes needs no link")
 
 t.expectEqual(SetupStep.allCases.count, 3, "three steps, as designed")
