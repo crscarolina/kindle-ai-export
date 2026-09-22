@@ -868,4 +868,55 @@ t.expectEqual(degenerate.visibleCount(total: 5), 1, "a clamped page still shows 
 degenerate.advance(total: 5)
 t.expectEqual(degenerate.visibleCount(total: 5), 2, "a clamped page still advances")
 
+// MARK: - Setup requirements
+
+for requirement in Requirement.allCases {
+  t.expect(!requirement.title.isEmpty, "\(requirement.rawValue) has a title")
+  t.expect(!requirement.detail.isEmpty, "\(requirement.rawValue) explains itself")
+  t.expect(!requirement.remedy.isEmpty, "\(requirement.rawValue) says what to do")
+}
+
+let nothing = RequirementsReport()
+t.expect(!nothing.isComplete, "a fresh install is not ready")
+t.expectEqual(nothing.missing.count, Requirement.allCases.count, "everything is missing")
+t.expectEqual(nothing.currentStep, .requirements, "setup starts at requirements")
+
+// The later steps depend on the earlier: there is no point entering an
+// Amazon password when the thing that would use it is not installed.
+var partly = RequirementsReport(satisfied: [.amazonAccount, .amazonSession])
+t.expectEqual(
+  partly.currentStep, .requirements,
+  "a configured account does not skip missing tools")
+
+partly.satisfied.formUnion([.chrome, .claudeInstalled, .claudeSignedIn, .pipeline])
+t.expectEqual(partly.currentStep, .testRun, "with everything met, only the test run is left")
+t.expect(partly.isComplete, "everything satisfied is complete")
+
+let toolsOnly = RequirementsReport(satisfied: [
+  .chrome, .claudeInstalled, .claudeSignedIn, .pipeline,
+])
+t.expectEqual(toolsOnly.currentStep, .account, "tools met moves on to the account")
+t.expect(toolsOnly.isComplete(.requirements), "the requirements step is done")
+t.expect(!toolsOnly.isComplete(.account), "the account step is not")
+
+// A failure surfaces far from its cause -- an expired Amazon session shows up
+// as a timeout inside extraction -- so each requirement names the step that
+// can actually fix it.
+t.expectEqual(
+  toolsOnly.step(toFix: .amazonSession), .account,
+  "a lapsed session sends the reader to the account step")
+t.expectEqual(
+  toolsOnly.step(toFix: .claudeSignedIn), .requirements,
+  "a lapsed Claude sign-in sends the reader to requirements")
+
+t.expectEqual(
+  Requirement.chrome.helpURL?.host(), "www.google.com",
+  "Chrome links somewhere useful")
+t.expect(
+  Requirement.amazonAccount.helpURL == nil,
+  "a requirement the app itself fixes needs no link")
+
+t.expectEqual(SetupStep.allCases.count, 3, "three steps, as designed")
+t.expect(SetupStep.requirements < SetupStep.account, "steps are ordered")
+
 t.finish(suite: "KindleExportCore")

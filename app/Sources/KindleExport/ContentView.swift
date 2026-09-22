@@ -122,7 +122,7 @@ struct SignInBanner: View {
         .foregroundStyle(.orange)
       Text("Amazon session expired — the queue is paused.")
       Spacer()
-      Button("Sign In") { Task { await model.signIn() } }
+      Button("Fix This") { model.returnToSetup(toFix: .amazonSession) }
         .disabled(model.isBusy)
     }
     .padding(10)

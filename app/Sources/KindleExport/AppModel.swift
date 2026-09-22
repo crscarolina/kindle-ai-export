@@ -161,6 +161,18 @@ final class AppModel {
   var log: [String] = []
   var showLog = false
   var voices: [VoiceOption] = []
+
+  // MARK: - Setup
+
+  var requirements = RequirementsReport()
+  var isCheckingRequirements = false
+  /// Shown until setup completes, or whenever the reader reopens it.
+  var showSetup = false
+  var setupStep: SetupStep = .requirements
+  var testRunOutcome: String?
+  var isTestRunning = false
+
+  private let checker = RequirementsChecker()
   /// A transient note shown over the library.
   ///
   /// Cleared on a timer: it used to persist for the life of the window, so
@@ -315,6 +327,75 @@ final class AppModel {
 
   func requestNotificationAuthorization() async {
     await notifier.requestAuthorization()
+  }
+
+  /// Re-check everything setup depends on.
+  ///
+  /// Run whenever the window appears and whenever the reader says they have
+  /// fixed something, since all of it -- an installed app, a signed-in CLI, a
+  /// browser session -- can change outside this process.
+  func checkRequirements() async {
+    isCheckingRequirements = true
+    defer { isCheckingRequirements = false }
+
+    var satisfied: Set<Requirement> = []
+
+    if checker.hasChrome() { satisfied.insert(.chrome) }
+    if checker.claudeExecutable() != nil { satisfied.insert(.claudeInstalled) }
+    if await checker.isClaudeSignedIn() { satisfied.insert(.claudeSignedIn) }
+    if settings.isConfigured { satisfied.insert(.pipeline) }
+
+    if !settings.amazonEmail.isEmpty, !settings.amazonPassword.isEmpty {
+      satisfied.insert(.amazonAccount)
+    }
+
+    // A profile directory with cookies in it is the only evidence available
+    // without opening a browser; whether the session is still valid shows up
+    // when it is used.
+    let cookies = settings.sessionDir + "/Default/Cookies"
+    if FileManager.default.fileExists(atPath: cookies) {
+      satisfied.insert(.amazonSession)
+    }
+
+    requirements = RequirementsReport(satisfied: satisfied)
+
+    if showSetup {
+      setupStep = max(setupStep, requirements.currentStep)
+      if requirements.isComplete(setupStep), setupStep != .testRun {
+        setupStep = requirements.currentStep
+      }
+    }
+  }
+
+  /// Send the reader to the step that can fix a given requirement.
+  func returnToSetup(toFix requirement: Requirement) {
+    setupStep = requirements.step(toFix: requirement)
+    testRunOutcome = nil
+    showSetup = true
+  }
+
+  /// Prove the whole chain works, on the smallest book available.
+  ///
+  /// Listing the library exercises the browser, the profile and the Amazon
+  /// session together -- the three things most likely to be wrong, and the
+  /// ones a reader cannot easily check for themselves.
+  func runSetupTest() async {
+    isTestRunning = true
+    testRunOutcome = nil
+    defer { isTestRunning = false }
+
+    await refreshLibrary()
+
+    if needsSignIn {
+      testRunOutcome = nil
+      returnToSetup(toFix: .amazonSession)
+      return
+    }
+
+    testRunOutcome =
+      library.isEmpty
+      ? "Signed in, but no books came back. If your library really is empty, there is nothing to export yet."
+      : "Found \(library.count) book\(library.count == 1 ? "" : "s"). Everything is working."
   }
 
   func clearLog() {
