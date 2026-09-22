@@ -146,25 +146,32 @@ struct LibraryGrid: View {
         .padding(.top, 80)
       } else {
         LazyVGrid(columns: columns, spacing: 20) {
-          ForEach(model.visibleLibrary) { item in
+          // The paging trigger hangs off the cells themselves, not off a
+          // footer below the grid. Only the grid is lazy: anything outside it
+          // is built as soon as the scroll view appears, so a footer sentinel
+          // fired once immediately and then never again -- it kept its view
+          // identity as the grid grew past it, and SwiftUI calls `onAppear`
+          // once per identity. A cell is created by `LazyVGrid` only when the
+          // reader scrolls near it, and each page brings new cells with new
+          // identities, so the trigger keeps firing until nothing is left.
+          ForEach(Array(model.visibleLibrary.enumerated()), id: \.element.id) {
+            index, item in
             BookCell(item: item, isSelected: item.asin == model.selectedAsin)
               .onTapGesture { model.selectedAsin = item.asin }
+              .onAppear { model.cellAppeared(at: index) }
           }
         }
         .padding(18)
 
         if model.hasMoreToShow {
-          // Rendering this sentinel means the reader has scrolled to the end
-          // of what is loaded, so the next rows are added.
-          HStack(spacing: 8) {
-            ProgressView().controlSize(.small)
-            Text("\(model.filteredLibrary.count - model.visibleCount) more")
-              .font(.caption)
-              .foregroundStyle(.secondary)
-          }
-          .frame(maxWidth: .infinity)
-          .padding(.vertical, 20)
-          .onAppear { model.showMore() }
+          // No spinner: widening the window is a larger `prefix` of an array
+          // already in memory. A spinner here would promise a load that never
+          // arrives, which is what made a stalled grid look like a hung one.
+          Text("\(model.remainingToShow) more")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 20)
         } else if model.filteredLibrary.count > AppModel.pageSize {
           Text("\(model.filteredLibrary.count) books")
             .font(.caption)

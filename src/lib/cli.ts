@@ -2,7 +2,7 @@ import path from 'node:path'
 
 import { parseAsin } from './asin'
 import { sessionDir } from './paths'
-import { DEFAULT_VOICE, findVoice, VOICES } from './voices'
+import { DEFAULT_VOICE, findVoice, PREVIEW_PACES, VOICES } from './voices'
 
 /** Resolved options for listing the reader's Kindle library. */
 export type LibraryCliOptions = {
@@ -18,8 +18,8 @@ export type LibraryCliOptions = {
   asins: string[] | undefined
   /** Restrict to these Kokoro voices, rather than all of them. */
   voiceIds: string[] | undefined
-  /** Narration speed, 1 being the voice's natural pace. */
-  speed: number
+  /** Paces to render, 1 being each voice's natural pace. */
+  speeds: number[]
   /** Redo work that has already been completed. */
   force: boolean
 }
@@ -119,7 +119,7 @@ export function parseLibraryCliArgs(
     limit: parseLimit(value('--limit')),
     asins: parseAsinList(value('--asin')),
     voiceIds: parseVoiceList(value('--voice')),
-    speed: parseSpeed(value('--speed') ?? env.KOKORO_SPEED),
+    speeds: parseSpeedList(value('--speed') ?? env.KOKORO_SPEED),
     force: flags.get('--force') === true || env.FORCE === 'true'
   }
 }
@@ -201,6 +201,29 @@ function parseSpeed(raw: string | undefined): number {
   }
 
   return speed
+}
+
+/**
+ * Parse a comma-separated pace list, or `all` for every pace the app offers.
+ *
+ * Each entry goes through the same validation as narration's `--speed`, so a
+ * pace that narration would reject cannot be rendered here and then turn out
+ * to be unselectable.
+ */
+function parseSpeedList(raw: string | undefined): number[] {
+  if (!raw) {
+    return [1]
+  }
+
+  if (raw.trim().toLowerCase() === 'all') {
+    return [...PREVIEW_PACES]
+  }
+
+  return raw
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .map((entry) => parseSpeed(entry))
 }
 
 function parseVoiceList(raw: string | undefined): string[] | undefined {

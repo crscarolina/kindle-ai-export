@@ -26,6 +26,15 @@ export type Voice = {
 
 export const DEFAULT_VOICE = 'af_heart'
 
+/**
+ * Paces an audition clip is rendered at.
+ *
+ * Must match the Pace picker in the app (`VoicePicker.paces`): a pace offered
+ * there with no clip rendered falls back to the natural-pace recording, which
+ * is not what the reader asked to hear.
+ */
+export const PREVIEW_PACES = [0.8, 0.85, 0.9, 0.95, 1, 1.05, 1.1, 1.25]
+
 export const VOICES: Voice[] = [
   {
     id: 'af_heart',

@@ -182,29 +182,42 @@ final class AppModel {
     }
   }
 
-  /// How many covers to render.
-  ///
-  /// A 234-book library would otherwise start 234 image loads the moment the
-  /// grid appears, so rows are added as the reader scrolls towards them.
-  static let pageSize = 60
-  var visibleCount = pageSize
+  /// How many covers to render. See `PageWindow` for why the grid is paged.
+  static let pageSize = PageWindow.defaultPageSize
+  private var page = PageWindow()
+
+  var visibleCount: Int {
+    page.visibleCount(total: filteredLibrary.count)
+  }
 
   var visibleLibrary: [Book] {
     Array(filteredLibrary.prefix(visibleCount))
   }
 
   var hasMoreToShow: Bool {
-    visibleCount < filteredLibrary.count
+    page.hasMore(total: filteredLibrary.count)
+  }
+
+  /// How many books are still held back.
+  var remainingToShow: Int {
+    page.remaining(total: filteredLibrary.count)
+  }
+
+  /// Called as each cell appears, so the grid grows only once the reader has
+  /// scrolled near the end of what is already rendered.
+  func cellAppeared(at index: Int) {
+    guard page.shouldAdvance(appearedIndex: index, total: filteredLibrary.count)
+    else { return }
+    showMore()
   }
 
   func showMore() {
-    guard hasMoreToShow else { return }
-    visibleCount = min(visibleCount + Self.pageSize, filteredLibrary.count)
+    page.advance(total: filteredLibrary.count)
   }
 
   /// Start again from the top whenever the visible set changes underneath.
   func resetPaging() {
-    visibleCount = Self.pageSize
+    page.reset()
   }
 
   var selectedItem: Book? {
@@ -421,7 +434,8 @@ final class AppModel {
       state: state,
       workDir: settings.workDir,
       userDataDir: settings.sessionDir,
-      destination: job.destination)
+      destination: job.destination,
+      naming: BookNaming(title: job.item.title, authors: job.item.authors))
 
     job.timeline = JobTimeline(commands: commands)
 

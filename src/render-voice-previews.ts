@@ -55,19 +55,30 @@ async function main() {
     device: 'cpu'
   })
 
-  for (const [index, voice] of voices.entries()) {
-    // Speed is part of the filename so auditions at different paces coexist.
-    const suffix = opts.speed === 1 ? '' : `@${opts.speed}x`
-    const outFile = path.join(outDir, `${voice.id}${suffix}.m4b`)
+  // Voice-major, so every pace of the best voice is ready before the set
+  // moves on. A full matrix is hours of synthesis and is likely to be stopped
+  // part-way; this makes the part that gets done the useful part.
+  const jobs = voices.flatMap((voice) =>
+    opts.speeds.map((speed) => ({ voice, speed }))
+  )
+
+  reporter.log(
+    `${jobs.length} clip${jobs.length === 1 ? '' : 's'}: ${voices.length} voice${voices.length === 1 ? '' : 's'} at ${opts.speeds.length} pace${opts.speeds.length === 1 ? '' : 's'}`
+  )
+
+  for (const [index, { voice, speed }] of jobs.entries()) {
+    const outFile = path.join(outDir, `${voice.id}${suffixFor(speed)}.m4b`)
+    const label =
+      speed === 1 ? voice.name : `${voice.name} at ${Math.round(speed * 100)}%`
 
     if (!opts.force && (await fileExists(outFile))) {
-      reporter.log(`${voice.id}: already rendered`)
+      reporter.log(`${label}: already rendered`)
     } else {
       const parts: Buffer[] = []
       for (const piece of pieces) {
         const audio = await tts.generate(piece, {
           voice: voice.id as any,
-          speed: opts.speed
+          speed
         })
         parts.push(Buffer.from(audio.toWav()))
       }
@@ -80,10 +91,7 @@ async function main() {
         await fs.writeFile(
           meta,
           buildChapterMetadata([], {
-            title:
-              opts.speed === 1
-                ? `${voice.name} \u2014 voice preview`
-                : `${voice.name} \u2014 voice preview at ${Math.round(opts.speed * 100)}%`,
+            title: `${label} \u2014 voice preview`,
             artist: `Kokoro ${voice.accent} ${voice.gender.toLowerCase()}`
           })
         )
@@ -92,14 +100,14 @@ async function main() {
         await fs.rm(staging, { recursive: true, force: true })
       }
 
-      reporter.log(`${voice.id}: rendered ${voice.name}`)
+      reporter.log(`${label}: rendered`)
     }
 
     reporter.emit({
       event: 'page',
       index,
       page: index + 1,
-      total: voices.length
+      total: jobs.length
     })
   }
 
@@ -109,8 +117,13 @@ async function main() {
     JSON.stringify(
       voices.map((voice) => ({
         ...voice,
-        speed: opts.speed,
-        preview: `${voice.id}${suffixFor(opts.speed)}.m4b`
+        paces: opts.speeds,
+        previews: Object.fromEntries(
+          opts.speeds.map((speed) => [
+            speed,
+            `${voice.id}${suffixFor(speed)}.m4b`
+          ])
+        )
       })),
       null,
       2
