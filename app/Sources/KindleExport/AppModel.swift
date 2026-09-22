@@ -161,7 +161,24 @@ final class AppModel {
   var log: [String] = []
   var showLog = false
   var voices: [VoiceOption] = []
-  var status: String?
+  /// A transient note shown over the library.
+  ///
+  /// Cleared on a timer: it used to persist for the life of the window, so
+  /// "234 books" from a refresh sat there contradicting a search that had
+  /// narrowed the grid to three.
+  var status: String? {
+    didSet {
+      guard status != nil else { return }
+      statusDismissal?.cancel()
+      statusDismissal = Task { [weak self] in
+        try? await Task.sleep(for: .seconds(4))
+        guard !Task.isCancelled else { return }
+        self?.status = nil
+      }
+    }
+  }
+
+  private var statusDismissal: Task<Void, Never>?
   var isBusy = false
   /// Set when Amazon's session lapses; pauses the queue rather than failing it.
   var needsSignIn = false

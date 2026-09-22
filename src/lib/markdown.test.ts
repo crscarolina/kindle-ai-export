@@ -129,3 +129,41 @@ describe('renderBookMarkdown', () => {
     expect(md).toContain('Third page. Fourth page. Fifth page.')
   })
 })
+
+describe('renderBookMarkdown beyond the extracted pages', () => {
+  // A preview run extracts the first pages while the table of contents still
+  // describes the whole book. Without a guard, an entry from deep in the book
+  // becomes the final heading and absorbs the tail of the text -- a 50-page
+  // excerpt of Wuthering Heights ended with "Chapter 34" over chapter 5.
+  const toc = [
+    { label: 'Chapter 1', positionId: 0, page: 1, depth: 0 },
+    { label: 'Chapter 2', positionId: 1, page: 3, depth: 0 },
+    { label: 'Chapter 34', positionId: 2, page: 400, depth: 0 }
+  ] as any
+
+  const content = [chunk(1, 'One.'), chunk(2, 'Two.'), chunk(3, 'Three.')]
+
+  test('omits headings for pages that were never extracted', () => {
+    const md = renderBookMarkdown({ metadata: meta(toc), content })
+    expect(md).not.toContain('Chapter 34')
+  })
+
+  test('keeps the headings that are covered', () => {
+    const md = renderBookMarkdown({ metadata: meta(toc), content })
+    expect(md).toContain('## Chapter 1')
+    expect(md).toContain('## Chapter 2')
+  })
+
+  test('gives the trailing text to the last covered chapter', () => {
+    const md = renderBookMarkdown({ metadata: meta(toc), content })
+    const sections = md.split(/^## /m)
+    expect(sections.at(-1)).toContain('Three.')
+  })
+
+  test('keeps every chapter when the whole book was extracted', () => {
+    const full = [...content, chunk(400, 'Late.')]
+    expect(
+      renderBookMarkdown({ metadata: meta(toc), content: full })
+    ).toContain('Chapter 34')
+  })
+})

@@ -22,11 +22,26 @@ function sectionize(toc: TocItem[], content: ContentChunk[]): TocSection[] {
   const sections: TocSection[] = []
   let index = 0
 
-  for (let i = 0; i < toc.length; i++) {
-    const tocItem = toc[i]!
-    if (tocItem.page === undefined) continue
+  // The table of contents describes the whole book, but a preview run only
+  // extracts the opening pages. Entries past the end are dropped up front
+  // rather than skipped inside the walk: the walk reads the *next* entry to
+  // find where this one ends, so a skipped entry left in the list would still
+  // be consulted, and the last real chapter would be discarded with it.
+  //
+  // Without any of this, an entry from deep in the book becomes the final
+  // heading and absorbs the tail of the text -- a 50-page excerpt of
+  // Wuthering Heights ended with "Chapter 34" set over chapter 5.
+  const lastExtractedPage = content.reduce(
+    (max, chunk) => Math.max(max, chunk.page),
+    0
+  )
 
-    const nextTocItem = toc[i + 1]
+  const entries = toc.filter(
+    (item) => item.page !== undefined && item.page <= lastExtractedPage
+  )
+
+  for (const [i, tocItem] of entries.entries()) {
+    const nextTocItem = entries[i + 1]
     const nextIndex = nextTocItem?.page
       ? content.findIndex((c) => c.page >= nextTocItem.page!)
       : content.length

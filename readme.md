@@ -15,6 +15,11 @@ text-to-speech account, no per-book cost.
 
 **You must own the book on Kindle for any of this to work.**
 
+<p align="center">
+  <img src="./docs/screenshot.jpg" alt="Kindle Export showing a book selected, with format toggles and the narrator panel" width="900" />
+</p>
+
+- [Example output](#example-output)
 - [How it works](#how-it-works)
 - [Requirements](#requirements)
 - [Getting started](#getting-started)
@@ -24,6 +29,21 @@ text-to-speech account, no per-book cost.
 - [How your library is stored](#how-your-library-is-stored)
 - [Limitations](#limitations)
 - [Credits](#credits)
+
+## Example output
+
+The first 50 pages of *Wuthering Heights*, which is out of copyright, exported
+by the app:
+
+- **[Transcript](./examples/wuthering-heights/wuthering-heights-first-50-pages.md)**
+  — 50 pages as Markdown with a table of contents. The cleanup pass restored
+  177 paragraph breaks that OCR had flattened away.
+- **[Audiobook excerpt](./examples/wuthering-heights/wuthering-heights-chapter-1.m4b)**
+  — the opening chapters narrated by Kokoro's *Emma*, a British voice, as a
+  chaptered M4B.
+
+Both were produced by the pipeline described below, on the machine this was
+written on, with no API key involved.
 
 ## How it works
 
