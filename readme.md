@@ -4,7 +4,7 @@
 
 <p>
   <a href="https://github.com/transitive-bullshit/kindle-ai-export/actions/workflows/main.yml"><img alt="Build Status" src="https://github.com/transitive-bullshit/kindle-ai-export/actions/workflows/main.yml/badge.svg" /></a>
-  <a href="https://github.com/transitive-bullshit/kindle-ai-export/blob/main/license"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-blue" /></a>
+  <a href="./LICENSE.md"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-blue" /></a>
   <a href="https://prettier.io"><img alt="Prettier Code Formatting" src="https://img.shields.io/badge/code_style-prettier-brightgreen.svg" /></a>
 </p>
 
@@ -367,6 +367,8 @@ I'm sure there will be edge cases and ebook features that are missing (like embe
 
 ## License
 
-MIT © [Travis Fischer](https://x.com/transitive_bs)
+MIT. Copyright (c) 2024 [Travis Fischer](https://x.com/transitive_bs), who wrote the
+original [kindle-ai-export](https://github.com/transitive-bullshit/kindle-ai-export)
+this is forked from, and (c) 2026 crscarolina. See [LICENSE.md](./LICENSE.md).
 
 If you found this project interesting, [consider following me on Twitter](https://x.com/transitive_bs).
