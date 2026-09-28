@@ -99,8 +99,17 @@ with the Command Line Tools.
 ### Downloading a release
 
 Releases carry two builds, one per architecture; `uname -m` says which you
-need. They are signed ad-hoc rather than with an Apple Developer certificate,
-so macOS quarantines them on download:
+need. Each comes as a `.dmg` and a `.zip`.
+
+Take the **`.dmg`**: open it and drag the app onto the Applications alias,
+which replaces any copy already there. Expanding the `.zip` has no install
+step, so updates accumulate beside each other as `KindleExport 2.app` and it
+stops being obvious which one you are running. The `.zip` stays available for
+scripted downloads.
+
+They are signed ad-hoc rather than with an Apple Developer certificate, so
+macOS quarantines them on download — this applies to the disk image too,
+since quarantine follows the app as it is copied off:
 
 ```sh
 xattr -dr com.apple.quarantine /Applications/KindleExport.app
