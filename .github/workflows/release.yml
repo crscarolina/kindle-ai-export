@@ -97,12 +97,16 @@ jobs:
           # beside the last as "KindleExport 2.app". Dragging onto the
           # Applications alias replaces in place instead.
           #
-          # ULMO (LZMA) rather than the usual UDZO: UDZO compresses per block
-          # and produced 411 MB against this zip's 231 MB. ULMO gets it to
-          # 325 MB for about three minutes of CPU, which is the cheapest part
-          # of this job. It still trails the zip because a disk image carries
-          # a filesystem, and node_modules is tens of thousands of small
-          # files paying block alignment.
+          # ULMO (LZMA) rather than the usual UDZO, which compresses per
+          # block and is much weaker: on the same bundle UDZO gave 411 MB and
+          # ULFO 379 MB where ULMO gave 325 MB. ULMO costs a few minutes of
+          # CPU, the cheapest part of this job.
+          #
+          # Measured on the real --prod bundle here, the image comes out
+          # smaller than the zip: 194 MB against 228 MB on arm64, 198 against
+          # 231 on x86_64. A local build looks worse only because
+          # build-app.sh rsyncs the working tree's node_modules, devDeps and
+          # all.
           mkdir -p dmg-stage
           cp -R app/build/KindleExport.app dmg-stage/
           ln -s /Applications dmg-stage/Applications
