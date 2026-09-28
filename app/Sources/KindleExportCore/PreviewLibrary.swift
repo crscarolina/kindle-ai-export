@@ -37,7 +37,7 @@ public let voicePreviewRelease = PreviewRelease(
     string:
       "https://github.com/crscarolina/kindle-ai-export/releases/download/previews-v1/voice-previews.zip"
   )!,
-  sha256: "",
+  sha256: "774c097e551d6a00ec6ec0e66e34d55dc10379c635ffb0419662d4fecbb43cfa",
   clipCount: 224)
 
 public enum PreviewInstallError: LocalizedError {
